@@ -6,6 +6,14 @@ import Plutus.V2.Ledger.Api qualified as P (Map)
 
 -- 1. Declare Types
 --  Define any required custom data types
+
+data RaffleTicket = RaffleTicket
+  { owner :: PubKeyHash
+  , secretHash :: BuiltinByteString
+  , secret :: Maybe BuiltinByteString
+  }
+  deriving (Generic, FromJSON, ToJSON)
+
 data RaffleStatus
   = NEW
   | COMMITTING
@@ -22,18 +30,19 @@ data RaffleDatum = RaffleDatum
   , raffleMinNoOfTickets :: Integer
   , raffleCommitDeadline :: POSIXTime
   , raffleRevealDeadline :: POSIXTime
-  , raffleTickets :: P.Map BuiltinByteString BuiltinByteString
+  , raffleTickets :: P.Map Integer RaffleTicket
   }
   deriving (Generic, FromJSON, ToJSON)
 
 data RaffleRedeemer
   = Buy [BuiltinByteString]
-  | Reveal [(BuiltinByteString, BuiltinByteString)]
+  | Reveal [(Integer, BuiltinByteString)]
   | Redeem
   | Cancel
   deriving (Generic, FromJSON, ToJSON)
 
 -- Generating ToData/FromData instances for the above types via Template Haskell
+unstableMakeIsData ''RaffleTicket
 unstableMakeIsData ''RaffleStatus
 makeIsDataIndexed ''RaffleDatum [('RaffleDatum, 0)]
 makeIsDataIndexed ''RaffleRedeemer [('Buy, 0), ('Reveal, 1), ('Redeem, 2), ('Cancel, 3)]
