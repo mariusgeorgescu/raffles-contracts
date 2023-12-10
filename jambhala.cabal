@@ -36,6 +36,7 @@ library
   import:             common
   exposed-modules:
     Contracts
+    Contracts.Raffle
     Jambhala.CLI
     Jambhala.Plutus
     Jambhala.Utils
