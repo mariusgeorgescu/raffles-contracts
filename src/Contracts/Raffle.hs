@@ -24,7 +24,7 @@ data RaffleStatus
 
 data RaffleDatum = RaffleDatum
   { raffleOrganizer :: PubKeyHash
-  , raffleValue :: Value
+  , raffleToken :: AssetClass
   , raffleStatus :: RaffleStatus
   , raffleTicketPrice :: Value
   , raffleMinNoOfTickets :: Integer
@@ -35,7 +35,7 @@ data RaffleDatum = RaffleDatum
   deriving (Generic, FromJSON, ToJSON)
 
 data RaffleRedeemer
-  = Buy [BuiltinByteString]
+  = Buy PubKeyHash [BuiltinByteString]
   | Reveal [(Integer, BuiltinByteString)]
   | Redeem
   | Cancel
@@ -51,6 +51,14 @@ makeIsDataIndexed ''RaffleRedeemer [('Buy, 0), ('Reveal, 1), ('Redeem, 2), ('Can
 
 raffleLamba :: RaffleDatum -> RaffleRedeemer -> ScriptContext -> Bool
 raffleLamba _ _ _ = False
+
+-- Buy :
+-- Tx must contain a valid state token input (CnGP Token) -- raffleToken
+-- owner must pay the pirce * noOfTickets to the script
+--  Tx must lock (in one or more outputs) at least the price to script.
+-- Tx must have an output locked at the script address (specified in datum) containing:
+--  (1) state token (CnGP Token)
+--  (2) updated datum  (tickets of the owner)
 
 -- | Untyped version of the spending validator lambda.
 untypedLambda :: UntypedValidator -- BuiltinData -> BuiltinData -> BuiltinData -> ()
