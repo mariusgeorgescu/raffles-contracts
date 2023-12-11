@@ -14,18 +14,11 @@ data RaffleTicket = RaffleTicket
   }
   deriving (Generic, FromJSON, ToJSON)
 
-data RaffleStatus
-  = NEW
-  | COMMITTING
-  | REVEALING
-  | EXPIRED
-  | INVALID
-  deriving (Generic, FromJSON, ToJSON, Enum)
+
 
 data RaffleDatum = RaffleDatum
   { raffleOrganizer :: PubKeyHash
   , raffleToken :: AssetClass
-  , raffleStatus :: RaffleStatus
   , raffleTicketPrice :: Value
   , raffleMinNoOfTickets :: Integer
   , raffleCommitDeadline :: POSIXTime
@@ -43,7 +36,6 @@ data RaffleRedeemer
 
 -- Generating ToData/FromData instances for the above types via Template Haskell
 unstableMakeIsData ''RaffleTicket
-unstableMakeIsData ''RaffleStatus
 makeIsDataIndexed ''RaffleDatum [('RaffleDatum, 0)]
 makeIsDataIndexed ''RaffleRedeemer [('Buy, 0), ('Reveal, 1), ('Redeem, 2), ('Cancel, 3)]
 
@@ -53,12 +45,12 @@ raffleLamba :: RaffleDatum -> RaffleRedeemer -> ScriptContext -> Bool
 raffleLamba _ _ _ = False
 
 -- Buy :
--- Tx must contain a valid state token input (CnGP Token) -- raffleToken
--- owner must pay the pirce * noOfTickets to the script
---  Tx must lock (in one or more outputs) at least the price to script.
--- Tx must have an output locked at the script address (specified in datum) containing:
---  (1) state token (CnGP Token)
---  (2) updated datum  (tickets of the owner)
+    -- Tx must contain a valid state token input (CnGP Token) -- raffleToken (must be in valid state)
+    -- owner must pay the pirce * noOfTickets to the script
+    --  Tx must lock (in one or more outputs) at least the price to script.
+    -- Tx must have an output locked at the script address (specified in datum) containing:
+        --  (1) state token (CnGP Token)
+        --  (2) updated datum  (tickets of the owner, state)
 
 -- | Untyped version of the spending validator lambda.
 untypedLambda :: UntypedValidator -- BuiltinData -> BuiltinData -> BuiltinData -> ()
