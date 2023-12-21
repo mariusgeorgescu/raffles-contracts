@@ -42,8 +42,9 @@ data RaffleTicket = RaffleTicket
   deriving (Generic, FromJSON, ToJSON)
 
 data RaffleDatum = RaffleDatum
-  { raffleOrganizer :: PubKeyHash
-  , raffleTokenAssetClass :: AssetClass
+  { raffleStateTokenAssetClass :: AssetClass
+  , raffleOrganizer :: PubKeyHash
+  , raffleTokenAssetClass :: AssetClass ---- change with Value
   , raffleTicketPrice :: Integer
   , raffleMinNoOfTickets :: Integer
   , raffleCommitDeadline :: POSIXTime

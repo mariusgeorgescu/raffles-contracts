@@ -11,14 +11,15 @@ import Contracts.Samples.NFT qualified as NFT
 import Jambhala.Plutus
 import Jambhala.Utils
 import Ledger.Tx.Constraints.TxConstraints (mustPayToOtherScriptWithInlineDatum)
-import Plutus.Script.Utils.Value (geq)
 import Plutus.V2.Ledger.Api (POSIXTime (POSIXTime))
+import PlutusTx.Builtins (blake2b_256)
 
 -- | Custom redeemer type to indicate minting mode.
 data Mode
   = Minting
       { raffle :: RaffleDatum
       , raffleValidatorHash :: ValidatorHash
+      , utxoRefSeed :: TxOutRef
       }
   | Burning
       { raffle :: RaffleDatum
@@ -37,18 +38,21 @@ hasUtxo :: TxOutRef -> [TxInInfo] -> Bool
 hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
 {-# INLINEABLE hasUtxo #-}
 
-tokenNameFromAssetClass :: AssetClass -> TokenName
-tokenNameFromAssetClass (AssetClass (CurrencySymbol csbs, TokenName tnbs)) = TokenName (sha2_256 (csbs `appendByteString` tnbs))
-{-# INLINEABLE tokenNameFromAssetClass #-}
+tokenNameFromTxOutRef :: TxOutRef -> TokenName
+tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
+{-# INLINEABLE tokenNameFromTxOutRef #-}
+
+integerToBs :: Integer -> BuiltinByteString
+integerToBs = serialiseData . mkI
+{-# INLINEABLE integerToBs #-}
 
 hasCreateRaffleOutput :: ScriptContext -> RaffleDatum -> TxOut -> Bool
 hasCreateRaffleOutput context raffle out =
   let policyCurrencySymbol = ownCurrencySymbol context
-      stateTokenName = tokenNameFromAssetClass (raffleTokenAssetClass raffle)
    in pand
         [ out `hasGivenInlineDatum` raffle
         , out `outHas1of` raffleTokenAssetClass raffle
-        , out `outHas1of` AssetClass (policyCurrencySymbol, stateTokenName)
+        , out `outHas1of` raffleStateTokenAssetClass raffle
         ]
 {-# INLINEABLE hasCreateRaffleOutput #-}
 
@@ -57,8 +61,8 @@ nftLambda :: RaffleParams -> Mode -> ScriptContext -> Bool
 nftLambda params mode context@(ScriptContext txInfo@TxInfo {..} _) =
   let policyCurrencySymbol = ownCurrencySymbol context
    in case mode of
-        Minting raffle@RaffleDatum {} vh ->
-          let stateTokenName = tokenNameFromAssetClass (raffleTokenAssetClass raffle)
+        Minting raffle@RaffleDatum {} vh txOutRef ->
+          let stateTokenName = tokenNameFromTxOutRef txOutRef
               txOutsToVH = filter ((#== scriptHashAddress vh) . txOutAddress) txInfoOutputs
            in pand
                 [ "The raffle parameters must be in datum"
@@ -67,15 +71,17 @@ nftLambda params mode context@(ScriptContext txInfo@TxInfo {..} _) =
                     `traceIfFalse` isValidRaffle raffle
                 , "The raffle datum must be in a valid new state"
                     `traceIfFalse` isInNewState raffle txInfo
-                , "The transaction must mint a token with token name equal to raffle's nft assetclass"
+                , "The seed UTxO must be consumed"
+                    `traceIfFalse` hasUtxo txOutRef txInfoInputs
+                , "The transaction must mint the state token (with token name equal to txOutRefSeed)"
                     `traceIfFalse` isInValue (policyCurrencySymbol, stateTokenName, 1) txInfoMint
-                , "The transaction must have an output (with the nft , state token name and datum) locked at the raffle validator's address"
+                , "The transaction must have an output (with the nft, state token and datum) locked at the raffle validator's address"
                     `traceIfFalse` pany (hasCreateRaffleOutput context raffle) txOutsToVH
                 , "The transaction must be signed by the raffle's organizer"
                     `traceIfFalse` txSignedBy txInfo (raffleOrganizer raffle)
                 ]
         Burning raffle ->
-          let stateTokenName = tokenNameFromAssetClass (raffleTokenAssetClass raffle)
+          let AssetClass (_, stateTokenName) = raffleStateTokenAssetClass raffle
            in "The transaction must burn a token with token name equal to raffle's nft assetclass"
                 `traceIfFalse` isInValue (policyCurrencySymbol, stateTokenName, -1) txInfoMint
 {-# INLINEABLE nftLambda #-}
@@ -103,12 +109,15 @@ exports =
   export
     (defExports policy)
       { -- Export JSON representations of our redeemer Mode values for transaction construction.
-        dataExports = [Minting sampleRaffleNew raffleVal `toJSONfile` "rafflemintmode", Burning sampleRaffleNew `toJSONfile` "raffleburnmode"]
+        dataExports = [Minting sampleRaffleNew raffleVal sampleTxOutRefSeed `toJSONfile` "rafflemintmode", Burning sampleRaffleNew `toJSONfile` "raffleburnmode"]
       , emulatorTest = test
       }
   where
     policy = compileScript sampleRafflePrams
     raffleVal = validatorHash (unValidatorContract Raffle.compileValidator)
+
+sampleTxOutRefSeed :: TxOutRef
+sampleTxOutRefSeed = unsafeMkTxOutRef "019b759d7d22f8f93125c27229debf4771194f9d9776acd31e3b0ac4bda04c9a" 1
 
 sampleRafflePrams :: RaffleParams
 sampleRafflePrams =
@@ -130,6 +139,7 @@ sampleRaffleNew =
     , raffleRevealDeadline = POSIXTime 1734964832000
     , raffleTickets = []
     , raffleParams = sampleRafflePrams
+    , raffleStateTokenAssetClass = AssetClass (getCurrencySymbol (compileScript sampleRafflePrams), tokenNameFromTxOutRef sampleTxOutRefSeed)
     }
 
 -- To produce the finished minting policy, select an arbitrary UTxO at your address to consume during the mint.
@@ -153,9 +163,11 @@ instance MintingEndpoint RaffleStateTokenMinting where
   mint :: MintParam RaffleStateTokenMinting -> ContractM RaffleStateTokenMinting ()
   mint (Mint raffle vh) = do
     let policy = compileScript sampleRafflePrams
-    let tn = tokenNameFromAssetClass (raffleTokenAssetClass raffle)
     let cs = getCurrencySymbol policy
+    oref <- getUnspentOutput
+    let tn = tokenNameFromTxOutRef oref
     let statetokenvalue = singleton cs tn 1
+    logStr $ "TxOutRef Seed:" ++ show oref
     minterUtxos <- ownUtxos
     now <- getCurrentInterval
     submitAndConfirm
@@ -165,20 +177,20 @@ instance MintingEndpoint RaffleStateTokenMinting where
             mconcat
               [ mustValidateInTimeRange (fromPlutusInterval now)
               , mustSign (raffleOrganizer raffle)
-              , mustMintWithRedeemer policy (Minting raffle vh) tn 1
-              , mustPayToOtherScriptWithInlineDatum vh (mkDatum raffle) (getRafflePrizeValue raffle <> statetokenvalue <> lovelaceValueOf 3000000)
+              , mustMintWithRedeemer policy (Minting raffle vh oref) tn 1
+              , mustPayToOtherScriptWithInlineDatum vh (mkDatum raffle) (getRafflePrizeValue raffle <> statetokenvalue <> lovelaceValueOf 2500000)
               ]
         }
     logStr $ "Minted 1 " ++ show tn
   mint (Burn raffle) = do
     let policy = compileScript sampleRafflePrams
-    let tn = tokenNameFromAssetClass (raffleTokenAssetClass raffle)
+    let AssetClass (_, stateTokenName) = raffleStateTokenAssetClass raffle
     submitAndConfirm
       Tx
         { lookups = scriptLookupsFor policy
-        , constraints = mustMintWithRedeemer policy (Burning raffle) tn (-1)
+        , constraints = mustMintWithRedeemer policy (Burning raffle) stateTokenName (-1)
         }
-    logStr $ "Burned 1 " ++ show tn
+    logStr $ "Burned 1 " ++ show stateTokenName
 
 -- | Define emulator test.
 test :: EmulatorTest
