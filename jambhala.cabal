@@ -37,6 +37,7 @@ library
   exposed-modules:
     Contracts
     Contracts.Raffle
+    Contracts.RaffleStateThreadNFT
     Jambhala.CLI
     Jambhala.Plutus
     Jambhala.Utils
