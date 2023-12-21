@@ -5,14 +5,13 @@
 
 module Contracts.RaffleStateThreadNFT where
 
-import Contracts.Raffle (RaffleDatum (..), RaffleParams (..), getRafflePrizeValue, hasGivenInlineDatum, isInNewState, isInValue, isValidRaffle, outHas1of)
+import Contracts.Raffle (RaffleDatum (..), RaffleParams (..), getRafflePrizeValue, hasCreateRaffleOutput, hasUtxo, isInNewState, isInValue, isValidRaffle, tokenNameFromTxOutRef)
 import Contracts.Raffle qualified as Raffle
 import Contracts.Samples.NFT qualified as NFT
 import Jambhala.Plutus
 import Jambhala.Utils
 import Ledger.Tx.Constraints.TxConstraints (mustPayToOtherScriptWithInlineDatum)
 import Plutus.V2.Ledger.Api (POSIXTime (POSIXTime))
-import PlutusTx.Builtins (blake2b_256)
 
 -- | Custom redeemer type to indicate minting mode.
 data Mode
@@ -33,29 +32,6 @@ makeIsDataIndexed ''Mode [('Minting, 0), ('Burning, 1)]
 
 -- 2. Define Lambda
 
--- | Helper function to check that a UTxO is being spent in the transaction.
-hasUtxo :: TxOutRef -> [TxInInfo] -> Bool
-hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
-{-# INLINEABLE hasUtxo #-}
-
-tokenNameFromTxOutRef :: TxOutRef -> TokenName
-tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
-{-# INLINEABLE tokenNameFromTxOutRef #-}
-
-integerToBs :: Integer -> BuiltinByteString
-integerToBs = serialiseData . mkI
-{-# INLINEABLE integerToBs #-}
-
-hasCreateRaffleOutput :: ScriptContext -> RaffleDatum -> TxOut -> Bool
-hasCreateRaffleOutput context raffle out =
-  let policyCurrencySymbol = ownCurrencySymbol context
-   in pand
-        [ out `hasGivenInlineDatum` raffle
-        , out `outHas1of` raffleTokenAssetClass raffle
-        , out `outHas1of` raffleStateTokenAssetClass raffle
-        ]
-{-# INLINEABLE hasCreateRaffleOutput #-}
-
 -- | Typed parameterized minting policy lambda.
 nftLambda :: RaffleParams -> Mode -> ScriptContext -> Bool
 nftLambda params mode context@(ScriptContext txInfo@TxInfo {..} _) =
@@ -68,7 +44,7 @@ nftLambda params mode context@(ScriptContext txInfo@TxInfo {..} _) =
                 [ "The raffle parameters must be in datum"
                     `traceIfFalse` (params #== raffleParams raffle)
                 , "The raffle parameters must be valid"
-                    `traceIfFalse` isValidRaffle raffle
+                    `traceIfFalse` isValidRaffle txOutRef raffle
                 , "The raffle datum must be in a valid new state"
                     `traceIfFalse` isInNewState raffle txInfo
                 , "The seed UTxO must be consumed"

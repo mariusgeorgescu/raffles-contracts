@@ -5,6 +5,7 @@ import Jambhala.Utils
 import Plutus.V1.Ledger.Interval (after, before)
 import Plutus.V1.Ledger.Value (geq)
 import Plutus.V2.Ledger.Api
+import PlutusTx.Builtins (blake2b_256)
 import PlutusTx.Eq qualified as PlutusTx
 
 -- 1. Declare Types
@@ -148,6 +149,31 @@ raffleLamba datum@RaffleDatum {..} redeemer context =
 
 ------------------CREATE RAFFLE -----------
 
+-- | Helper function to check that a UTxO is being spent in the transaction.
+hasUtxo :: TxOutRef -> [TxInInfo] -> Bool
+hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
+{-# INLINEABLE hasUtxo #-}
+
+tokenNameFromTxOutRef :: TxOutRef -> TokenName
+tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
+{-# INLINEABLE tokenNameFromTxOutRef #-}
+
+integerToBs :: Integer -> BuiltinByteString
+integerToBs = serialiseData . mkI
+{-# INLINEABLE integerToBs #-}
+
+hasCreateRaffleOutput :: ScriptContext -> RaffleDatum -> TxOut -> Bool
+hasCreateRaffleOutput context raffle out =
+  let policyCurrencySymbol = ownCurrencySymbol context
+   in pand
+        [ out `hasGivenInlineDatum` raffle
+        , out `outHas1of` raffleTokenAssetClass raffle
+        , out `outHas1of` raffleStateTokenAssetClass raffle
+        ]
+{-# INLINEABLE hasCreateRaffleOutput #-}
+
+-----------------------------------------------
+
 {- | This function receives a  t'TxOut' and a t'RaffleDatum' and returns v'True' if the following conditions are met:
      * t'TxOut' contains the t'RaffleDatum' inlined.
      * t'TxOut' contains exactly 1 quantity of the t'AssetClass' specified in the t'RaffleDatum'.
@@ -163,12 +189,13 @@ For the raffle to be valid, the following conditions must be met:
      * The minimum number of tickets must be a positive number.
      * The revealing deadline must be with at least revealing window after the committing deadline.
 -}
-isValidRaffle :: RaffleDatum -> Bool
-isValidRaffle RaffleDatum {raffleCommitDeadline, raffleRevealDeadline, raffleTicketPrice, raffleMinNoOfTickets, raffleParams} =
+isValidRaffle :: TxOutRef -> RaffleDatum -> Bool
+isValidRaffle seedTxOutRef RaffleDatum {..} =
   pand
     [ "ticket price is negative" `traceIfFalse` (raffleTicketPrice #> 0)
     , "min. no. of tickets is negative" `traceIfFalse` (raffleMinNoOfTickets #> 0)
     , "min. reveal window not met" `traceIfFalse` (getPOSIXTime (raffleRevealDeadline #- raffleCommitDeadline) #> minRevealingWindow raffleParams)
+    , "invalid state token name" `traceIfFalse` (tokenNameFromTxOutRef seedTxOutRef #== (\(AssetClass (_, tn)) -> tn) raffleStateTokenAssetClass)
     ]
 
 {- | This is a function to check that a RaffleDatum represents a raffle in a @New State@ in a given transaction context.

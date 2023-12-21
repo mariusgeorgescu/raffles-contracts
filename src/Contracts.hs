@@ -10,7 +10,6 @@ module Contracts (contracts, samples) where
 -- import  Contracts.MyContract qualified as MyContract
 
 import Contracts.RaffleStateThreadNFT qualified as RaffleStateThreadNFT
-import Contracts.Raffle qualified as Raffle
 import Contracts.Samples.Auction qualified as Auction
 import Contracts.Samples.CustomTyped qualified as CustomTyped
 import Contracts.Samples.ForwardMinting qualified as ForwardMinting
