@@ -128,42 +128,21 @@ raffleLamba params datum@RaffleDatum {..} redeemer context =
           Redeem -> False
           Cancel ->
             pand
-              [ "The raffle must be in a valid new state"
+              [ prizeReclaimedByOrganizer datum context
+              , "The raffle must be in a valid new state"
                   `traceIfFalse` isInNewState datum txInfo
-              , "The transaction must be signed by the raffle organizer"
-                  `traceIfFalse` txSignedBy txInfo raffleOrganizer
-              , "The transaction must burn the raffleStateToken"
-                  `traceIfFalse` burnStateToken datum context
-              , "The transaction must pay any excess value to the donation pkh"
-                  `traceIfFalse` isPayingDonation context datum
-              , "The transaction must pay the prize back to the raffle organizer"
-                  `traceIfFalse` isPayingValueTo context rafflePrizeValue raffleOrganizer
               ]
           CloseExpired ->
             pand
-              [ "The raffle must be in a valid expired state"
+              [ prizeReclaimedByOrganizer datum context
+              , "The raffle must be in a valid expired state"
                   `traceIfFalse` isInExpiredState datum txInfo
-              , "The transaction must be signed by the raffle organizer"
-                  `traceIfFalse` txSignedBy txInfo raffleOrganizer
-              , "The transaction must burn the raffleStateToken"
-                  `traceIfFalse` burnStateToken datum context
-              , "The transaction must pay any excess value to the donation pkh"
-                  `traceIfFalse` isPayingDonation context datum
-              , "The transaction must pay the prize back to the raffle organizer"
-                  `traceIfFalse` isPayingValueTo context rafflePrizeValue raffleOrganizer
               ]
           CloseUnderfunded ->
             pand
-              [ "The raffle must be in a valid underfunded state"
+              [ prizeReclaimedByOrganizer datum context
+              , "The raffle must be in a valid underfunded state"
                   `traceIfFalse` isInUnderfundedState datum txInfo
-              , "The transaction must be signed by the raffle organizer"
-                  `traceIfFalse` txSignedBy txInfo raffleOrganizer
-              , "The transaction must burn the raffleStateToken"
-                  `traceIfFalse` burnStateToken datum context
-              , "The transaction must pay any excess value to the donation pkh"
-                  `traceIfFalse` isPayingDonation context datum
-              , "The transaction must pay the prize back to the raffle organizer"
-                  `traceIfFalse` isPayingValueTo context rafflePrizeValue raffleOrganizer
               , "The transaction must pay the ticket price back to each ticket owner."
                   `traceIfFalse` isRefundingAllTickets datum context
               ]
@@ -171,6 +150,19 @@ raffleLamba params datum@RaffleDatum {..} redeemer context =
           CloseExposedUnderfunded _pkh -> False
           CloseExposedUnrevealed _pkh -> False
         else isPayingValueTo context (getOwnInputValue context) (donationPKH raffleParams) --  Only goes to donation PKH
+
+prizeReclaimedByOrganizer :: RaffleDatum -> ScriptContext -> Bool
+prizeReclaimedByOrganizer datum@RaffleDatum {..} context@ScriptContext {scriptContextTxInfo} =
+  pand
+    [ "The transaction must be signed by the raffle organizer"
+        `traceIfFalse` txSignedBy scriptContextTxInfo raffleOrganizer
+    , "The transaction must burn the raffleStateToken"
+        `traceIfFalse` burnStateToken datum context
+    , "The transaction must pay any excess value to the donation pkh"
+        `traceIfFalse` isPayingDonation context datum
+    , "The transaction must pay the prize back to the raffle organizer"
+        `traceIfFalse` isPayingValueTo context rafflePrizeValue raffleOrganizer
+    ]
 
 -- | This ensures the link between state token minting policy and current validator
 raffleHasValidStateTokenCurrencySymbol :: RaffleValidatorParams -> RaffleDatum -> Bool
