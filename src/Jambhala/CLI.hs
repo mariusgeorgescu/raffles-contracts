@@ -19,7 +19,7 @@ import Jambhala.Plutus
 import Options.Applicative
 import System.Directory.Extra (doesDirectoryExist, doesFileExist)
 import System.Environment (lookupEnv)
-import System.IO (BufferMode (..), getChar, hSetBuffering, putStr, stdin, stdout, writeFile)
+import System.IO (BufferMode (..), getChar, hSetBuffering, putStr, stdin, stdout)
 
 runJamb :: (MonadIO m) => JambContracts -> m ()
 runJamb = runReaderT (commandParser >>= liftIO . execParser >>= runCommand)

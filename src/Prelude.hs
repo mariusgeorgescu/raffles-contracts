@@ -108,6 +108,7 @@ module Prelude (
   putStrLn,
   print,
   printf,
+  writeFile
 )
 where
 
@@ -195,7 +196,7 @@ import PlutusTx.Prelude hiding (
  )
 import PlutusTx.Prelude qualified as P
 import PlutusTx.Ratio qualified as P.Ratio
-import System.IO (FilePath, IO, print, putStrLn)
+import System.IO (FilePath, IO, print, putStrLn, writeFile)
 import Text.Printf (printf)
 
 {-# INLINEABLE perror #-}
