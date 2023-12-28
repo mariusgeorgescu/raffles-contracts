@@ -229,8 +229,10 @@ instance MintingEndpoint RaffleStateTokenMinting where
 -- | Define emulator test.
 test :: EmulatorTest
 test =
-  initEmulator @NFT.NFTMinting 1 [NFT.Mint "jambtoken" `forWallet` 1] -- mint NFT to wallet 1
-    <> initEmulator @RaffleStateTokenMinting
-      1
-      [ Mint sampleRaffleNew "812fc438d71cb1c1ed0803eb113dc0c1539914d5d435a7600362d7ae" `forWallet` 1 -- Create raffle to validatorHash
-      ]
+  mconcat
+    [ initEmulator @NFT.NFTMinting 1 [NFT.Mint "jambtoken" `forWallet` 1] -- mint NFT to wallet 1
+    , initEmulator @RaffleStateTokenMinting
+        1
+        [ Mint sampleRaffleNew "812fc438d71cb1c1ed0803eb113dc0c1539914d5d435a7600362d7ae" `forWallet` 1 -- Create raffle to validatorHash
+        ]
+    ]

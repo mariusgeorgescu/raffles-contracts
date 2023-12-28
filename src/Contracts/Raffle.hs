@@ -1,6 +1,5 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# OPTIONS_HADDOCK show-extensions #-}
 
-{-# HLINT ignore "Use newtype instead of data" #-}
 module Contracts.Raffle where
 
 import Jambhala.Plutus hiding (Address)
@@ -11,21 +10,27 @@ import Plutus.V2.Ledger.Api
 import PlutusTx.Builtins (blake2b_256)
 import PlutusTx.Eq qualified as PlutusTx
 
--- 1. Declare Types
---  Define script parameters type
+-- *  Types
 
-data RaffleValidatorParams = RaffleValidatorParams
+-- ** Script Parameters
+newtype RaffleValidatorParams = RaffleValidatorParams
   {raffleStateTokenPolicy :: MintingPolicyHash}
   deriving (Generic, FromJSON, ToJSON)
 
 --  Generate Lift instance
 makeLift ''RaffleValidatorParams
 
+---- ** Custom data types
+
 data RaffleParams = RaffleParams
-  { closingWindow :: Integer -- Miliseconds
-  , minRevealingWindow :: Integer -- Miliseconds
-  , donationPKH :: PubKeyHash
-  , maxNoOfTickets :: Integer
+  { -- | The milliseconds after commit or reaveal deadline in which only the organizer can close underfunded or unrevealed raffles.
+    closingWindow :: Integer
+  , -- | The minimum difference between the commit and reveal deadlines in milliseconds.
+    minRevealingWindow :: Integer
+  , -- | The 'PubKeyHash' to which any extra amount locked at the raffle validator's address must be locked when the raffle is closed.
+    donationPKH :: PubKeyHash
+  , -- | The maximum number of tickets a raffle can have. This parameter is in place to prevent exceeding transaction size on refunds.
+    maxNoOfTickets :: Integer
   }
   deriving (Generic, FromJSON, ToJSON)
 
@@ -39,10 +44,8 @@ instance PlutusTx.Eq RaffleParams where
       , maxNoOfTickets r1 #== maxNoOfTickets r2
       ]
 
---  Generate Lift instance
 makeLift ''RaffleParams
-
---  Define any required custom data types
+unstableMakeIsData ''RaffleParams
 
 data RaffleTicket = RaffleTicket
   { ticketOwner :: PubKeyHash
@@ -51,6 +54,8 @@ data RaffleTicket = RaffleTicket
   , ticketSecret :: Maybe BuiltinByteString
   }
   deriving (Generic, FromJSON, ToJSON)
+
+unstableMakeIsData ''RaffleTicket
 
 data RaffleDatum = RaffleDatum
   { raffleStateTokenAssetClass :: AssetClass
@@ -65,6 +70,8 @@ data RaffleDatum = RaffleDatum
   }
   deriving (Generic, FromJSON, ToJSON)
 
+makeIsDataIndexed ''RaffleDatum [('RaffleDatum, 0)]
+
 data RaffleRedeemer
   = Buy PubKeyHash [BuiltinByteString]
   | Reveal [RaffleTicket]
@@ -78,9 +85,6 @@ data RaffleRedeemer
   deriving (Generic, FromJSON, ToJSON)
 
 -- Generating ToData/FromData instances for the above types via Template Haskell
-unstableMakeIsData ''RaffleTicket
-unstableMakeIsData ''RaffleParams
-makeIsDataIndexed ''RaffleDatum [('RaffleDatum, 0)]
 makeIsDataIndexed
   ''RaffleRedeemer
   [ ('Buy, 1)
@@ -94,7 +98,7 @@ makeIsDataIndexed
   , ('CloseExposedUnrevealed, 9)
   ]
 
--- 2. Define Helper Functions & Lambda
+-- *  Validator Lambda
 
 raffleLamba :: RaffleValidatorParams -> RaffleDatum -> RaffleRedeemer -> ScriptContext -> Bool
 raffleLamba params raffle@RaffleDatum {..} redeemer context =
@@ -169,11 +173,11 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
               ]
         else txIsPayingValueTo txInfo (getOwnInputValue context) (donationPKH raffleParams) --  Any invalid value sent to the raffle address should be spendable only to the raffle's donation PKH
 
----------------
----------------
--- UTILITIES --
----------------
----------------
+------------------------
+
+-- **  Helper Functions
+
+------------------------
 
 -- | Helper function to check that the correct quantity of the given token is in a Value
 isInValue :: (CurrencySymbol, TokenName, Integer) -> Value -> Bool
@@ -224,11 +228,11 @@ getOwnInputValue context = case findOwnInput context of
   Just (TxInInfo _inOutRef inOut) -> txOutValue inOut
 {-# INLINEABLE getOwnInputValue #-}
 
-----------------------
-----------------------
--- Raffle Tickets   --
-----------------------
-----------------------
+------------------------
+
+-- **  Raffle Tickets Functions
+
+------------------------
 
 {- |  This function receives a 'PubKeyHash', a 'BuiltinByteString' represeting a secret hash and a '[RaffleTicket]'
 , and returns a new list including a new ticket with 'PubKeyHash' as owner.
@@ -237,11 +241,13 @@ insertTicket :: PubKeyHash -> BuiltinByteString -> [RaffleTicket] -> [RaffleTick
 insertTicket pkh secrethash tickets =
   let count = plength tickets
    in RaffleTicket pkh count secrethash Nothing : tickets
+{-# INLINEABLE insertTicket #-}
 
 isValidTicket :: RaffleTicket -> Bool
 isValidTicket RaffleTicket {ticketSecret, ticketSecretHash} = case ticketSecret of
   Nothing -> False
   Just ts -> sha2_256 ts #== ticketSecretHash
+{-# INLINEABLE isValidTicket #-}
 
 {- | This function receives two 'RaffleTicket' and returns 'True' if the following conditions are met.
      * both tickets have the same number
@@ -257,16 +263,19 @@ isRevealedOf new old =
     , isNothing (ticketSecret old)
     , isValidTicket new
     ]
+{-# INLINEABLE isRevealedOf #-}
 
 -- | This function receives two 'RaffleTicket' and returns the first one if 'isRevealedOf' the second one, otherwise it returns the second one.
 reavealIfMatched :: RaffleTicket -> RaffleTicket -> RaffleTicket
 reavealIfMatched new ticket = if new `isRevealedOf` ticket then new else ticket
+{-# INLINEABLE reavealIfMatched #-}
 
 {- | This function receives a ''RaffleTicket', and a '[RaffleTicket]'
 , and returns a new list with the corresponding ticket revealed.
 -}
 reavealSecret :: RaffleTicket -> [RaffleTicket] -> [RaffleTicket]
 reavealSecret new tickets = reavealIfMatched new <$> tickets
+{-# INLINEABLE reavealSecret #-}
 
 updateRaffle :: RaffleRedeemer -> RaffleDatum -> RaffleDatum
 updateRaffle (Buy pkh commits) datum@RaffleDatum {raffleTickets} =
@@ -276,37 +285,45 @@ updateRaffle (Reveal newtickets) datum@RaffleDatum {raffleTickets} =
   let updatedListOfTickets = pfoldr reavealSecret raffleTickets newtickets
    in datum {raffleTickets = updatedListOfTickets}
 updateRaffle _ _ = error "invalid redeemer to update datum"
+{-# INLINEABLE updateRaffle #-}
 
-----------------------
-----------------------
--- Raffle Functions --
-----------------------
-----------------------
+------------------------
+
+-- **  Raffle Functions
+
+------------------------
 
 -- | This is a function which determines the @revealing interval@ for a given 'RaffleDatum'.
 getRaffleRevealingValidRange :: RaffleDatum -> POSIXTimeRange
 getRaffleRevealingValidRange RaffleDatum {..} = Interval (lowerBound raffleCommitDeadline) (upperBound raffleRevealDeadline)
+{-# INLINEABLE getRaffleRevealingValidRange #-}
 
 getRaffleCloseUnderfundedValidRange :: RaffleDatum -> POSIXTimeRange
 getRaffleCloseUnderfundedValidRange RaffleDatum {..} = Interval (lowerBound raffleCommitDeadline) (upperBound (raffleCommitDeadline #+ fromInteger (closingWindow raffleParams)))
+{-# INLINEABLE getRaffleCloseUnderfundedValidRange #-}
 
 getRaffleCloseUnrevealedValidRange :: RaffleDatum -> POSIXTimeRange
 getRaffleCloseUnrevealedValidRange RaffleDatum {..} = Interval (lowerBound raffleRevealDeadline) (upperBound (raffleRevealDeadline #+ fromInteger (closingWindow raffleParams)))
+{-# INLINEABLE getRaffleCloseUnrevealedValidRange #-}
 
 getRaffleAccumulatedValue :: RaffleDatum -> Value
 getRaffleAccumulatedValue RaffleDatum {..} = lovelaceValueOf (raffleTicketPrice * plength raffleTickets)
+{-# INLINEABLE getRaffleAccumulatedValue #-}
 
 getRaffleUnrevealedTickets :: RaffleDatum -> [RaffleTicket]
 getRaffleUnrevealedTickets RaffleDatum {..} = filter (isNothing . ticketSecret) raffleTickets
+{-# INLINEABLE getRaffleUnrevealedTickets #-}
 
 getUnrevealedValue :: RaffleDatum -> Value
 getUnrevealedValue raffle =
   let unRevealedTickets = getRaffleUnrevealedTickets raffle
    in lovelaceValueOf (raffleTicketPrice raffle #* plength unRevealedTickets)
+{-# INLINEABLE getUnrevealedValue #-}
 
 -- TO DO
 determineRaffleWinner :: RaffleDatum -> PubKeyHash
 determineRaffleWinner = raffleOrganizer
+{-# INLINEABLE determineRaffleWinner #-}
 
 -- | This ensures the link between state token minting policy and current validator
 raffleHasValidStateTokenCurrencySymbol :: RaffleValidatorParams -> RaffleDatum -> Bool
@@ -318,12 +335,13 @@ raffleHasAvailableTickets :: RaffleDatum -> Integer -> Bool
 raffleHasAvailableTickets RaffleDatum {raffleParams, raffleTickets} noOfNewTickets =
   "The maximum no. of tickets must not be reached"
     `traceIfFalse` ((plength raffleTickets #+ noOfNewTickets) #<= maxNoOfTickets raffleParams)
+{-# INLINEABLE raffleHasAvailableTickets #-}
 
-------------------
-------------------
--- Check States --
-------------------
-------------------
+------------------------
+
+-- **  State checks
+
+------------------------
 
 {- | This is a function to check that a RaffleDatum represents a raffle in a @New State@, in a given transaction context.
 The function returns 'True' if the following conditions are met:
@@ -355,6 +373,7 @@ isInExpiredState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInf
       , "raffleTickets is not empty"
           `traceIfFalse` pnull raffleTickets
       ]
+{-# INLINEABLE isInExpiredState #-}
 
 {- | This is a function to check that a RaffleDatum represents a raffle in a @Committing State@, in a given transaction context.
 The function returns 'True' if the following conditions are met:
@@ -483,22 +502,24 @@ isWinnerSelectedByCRS RaffleDatum {..} TxInfo {txInfoValidRange} =
       ]
 {-# INLINEABLE isWinnerSelectedByCRS #-}
 
-------------------
-------------------
--- RAFFLE IN TX --
-------------------
-------------------
+------------------------
+
+-- **  Helper functions for raffle in transaction context
+
+------------------------
 
 txIsBurningStateToken :: TxInfo -> RaffleDatum -> Bool
 txIsBurningStateToken TxInfo {txInfoMint} RaffleDatum {raffleStateTokenAssetClass} =
   let AssetClass (policyCurrencySymbol, stateTokenName) = raffleStateTokenAssetClass
    in isInValue (policyCurrencySymbol, stateTokenName, -1) txInfoMint
+{-# INLINEABLE txIsBurningStateToken #-}
 
 txIsPayingValueTo :: TxInfo -> Value -> PubKeyHash -> Bool
 txIsPayingValueTo txInfo value pkh =
   let txOutsToPKH = filter ((#== pubKeyHashAddress pkh) . txOutAddress) (txInfoOutputs txInfo)
       paidValue = psum (txOutValue #<$> txOutsToPKH)
    in paidValue `geq` value
+{-# INLINEABLE txIsPayingValueTo #-}
 
 txIsPayingPrizeToPKH :: TxInfo -> RaffleDatum -> PubKeyHash -> Bool
 txIsPayingPrizeToPKH txInfo RaffleDatum {..} pkh =
@@ -506,6 +527,7 @@ txIsPayingPrizeToPKH txInfo RaffleDatum {..} pkh =
     [ "The transaction must pay the prize back to the pkh"
         `traceIfFalse` txIsPayingValueTo txInfo rafflePrizeValue pkh
     ]
+{-# INLINEABLE txIsPayingPrizeToPKH #-}
 
 txIsPayingPrizeToOrganizer :: TxInfo -> RaffleDatum -> Bool
 txIsPayingPrizeToOrganizer txInfo RaffleDatum {..} =
@@ -515,41 +537,48 @@ txIsPayingPrizeToOrganizer txInfo RaffleDatum {..} =
     , "The transaction must pay the prize back to the raffle organizer"
         `traceIfFalse` txIsPayingValueTo txInfo rafflePrizeValue raffleOrganizer
     ]
+{-# INLINEABLE txIsPayingPrizeToOrganizer #-}
 
 txIsPayingPriceToTicketOwner :: TxInfo -> Integer -> RaffleTicket -> Bool
 txIsPayingPriceToTicketOwner txInfo price RaffleTicket {..} = txIsPayingValueTo txInfo (lovelaceValueOf price) ticketOwner
+{-# INLINEABLE txIsPayingPriceToTicketOwner #-}
 
 txIsRefundingAllTickets :: TxInfo -> RaffleDatum -> Bool
 txIsRefundingAllTickets txInfo RaffleDatum {..} =
   "The transaction must pay the ticket price back to each ticket owner."
     `traceIfFalse` pall (txIsPayingPriceToTicketOwner txInfo raffleTicketPrice) raffleTickets
+{-# INLINEABLE txIsRefundingAllTickets #-}
 
 txIsPayingAccumulatedValueToOrganizer :: TxInfo -> RaffleDatum -> Bool
 txIsPayingAccumulatedValueToOrganizer txInfo raffle@RaffleDatum {..} =
   "The transaction must pay the accumulated value to the raffle organizer."
     `traceIfFalse` txIsPayingValueTo txInfo (getRaffleAccumulatedValue raffle) raffleOrganizer
+{-# INLINEABLE txIsPayingAccumulatedValueToOrganizer #-}
 
 txIsRefundingRevealedTickets :: TxInfo -> RaffleDatum -> Bool
 txIsRefundingRevealedTickets txInfo RaffleDatum {..} =
   "The transaction must pay the ticket price back to each ticket owner who revealed the ticket secret."
     `traceIfFalse` pall (txIsPayingPriceToTicketOwner txInfo raffleTicketPrice) (filter (isJust . ticketSecret) raffleTickets)
+{-# INLINEABLE txIsRefundingRevealedTickets #-}
 
 -- | This is a function which checks if a given transaction is signed by each ticket owner.
 txIsSignedByTicketOwners :: ScriptContext -> [RaffleTicket] -> Bool
 txIsSignedByTicketOwners ScriptContext {scriptContextTxInfo} tickets =
   "The transaction must be signed by each ticket owner"
     `traceIfFalse` pall ((scriptContextTxInfo `txSignedBy`) . ticketOwner) tickets
+{-# INLINEABLE txIsSignedByTicketOwners #-}
 
 txIsPayingUnrevealedValueToPKH :: TxInfo -> RaffleDatum -> PubKeyHash -> Bool
 txIsPayingUnrevealedValueToPKH txInfo datum pkh =
   "The transaction must pay the amount for the unrevealed tickets to the pkh"
     `traceIfFalse` txIsPayingValueTo txInfo (getUnrevealedValue datum) pkh
+{-# INLINEABLE txIsPayingUnrevealedValueToPKH #-}
 
------------------------
------------------------
--- RAFFLE IN CONTEXT --
------------------------
------------------------
+------------------------
+
+-- **  Helper functions for raffle in script context
+
+------------------------
 
 ctxGetExtraAmount :: ScriptContext -> RaffleDatum -> Value
 ctxGetExtraAmount context raffle@RaffleDatum {..} =
@@ -558,9 +587,11 @@ ctxGetExtraAmount context raffle@RaffleDatum {..} =
           #+ rafflePrizeValue
           #+ assetClassValue raffleStateTokenAssetClass 1
        )
+{-# INLINEABLE ctxGetExtraAmount #-}
 
 ctxIsPayingDonation :: ScriptContext -> RaffleDatum -> Bool
 ctxIsPayingDonation context@ScriptContext {scriptContextTxInfo} raffle@RaffleDatum {..} = txIsPayingValueTo scriptContextTxInfo (ctxGetExtraAmount context raffle) (donationPKH raffleParams)
+{-# INLINEABLE ctxIsPayingDonation #-}
 
 ctxIsBurningStateTokenAndPayingAnyExtraToDonation :: ScriptContext -> RaffleDatum -> Bool
 ctxIsBurningStateTokenAndPayingAnyExtraToDonation context@ScriptContext {scriptContextTxInfo} raffle =
@@ -572,6 +603,7 @@ ctxIsBurningStateTokenAndPayingAnyExtraToDonation context@ScriptContext {scriptC
         "The transaction must pay any excess value to the donation pkh"
         (ctxIsPayingDonation context raffle)
     ]
+{-# INLINEABLE ctxIsBurningStateTokenAndPayingAnyExtraToDonation #-}
 
 -- | The transaction must have an output containing the previous value locked with state token, and with the updated datum inlined, locked at the raffle validator's address.
 ctxHasContinuingOutputWithCorrectValueAndDatum :: ScriptContext -> RaffleDatum -> RaffleRedeemer -> Bool
