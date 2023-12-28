@@ -120,7 +120,11 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
               ]
           Redeem ->
             pand
-              []
+              [ isWinnerSelectedByCRS raffle txInfo
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingAccumulatedValueToOrganizer txInfo raffle
+              , txIsPayingPrizeToPKH txInfo raffle (determineRaffleWinner raffle)
+              ]
           Cancel ->
             pand
               [ isInNewState raffle txInfo
@@ -158,8 +162,8 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
           CloseExposedUnrevealed pkh ->
             pand
               [ isInUnrevealedExposedState raffle txInfo
-              , txIsPayingPrizeToPKH txInfo raffle pkh
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToPKH txInfo raffle pkh
               , txIsRefundingRevealedTickets txInfo raffle
               , txIsPayingUnrevealedValueToPKH txInfo raffle pkh
               ]
@@ -300,9 +304,9 @@ getUnrevealedValue raffle =
   let unRevealedTickets = getRaffleUnrevealedTickets raffle
    in lovelaceValueOf (raffleTicketPrice raffle #* plength unRevealedTickets)
 
--- -- TO DO
--- determineRaffleWinner :: RaffleDatum -> PubKeyHash
--- determineRaffleWinner = raffleOrganizer
+-- TO DO
+determineRaffleWinner :: RaffleDatum -> PubKeyHash
+determineRaffleWinner = raffleOrganizer
 
 -- | This ensures the link between state token minting policy and current validator
 raffleHasValidStateTokenCurrencySymbol :: RaffleValidatorParams -> RaffleDatum -> Bool
@@ -519,6 +523,11 @@ txIsRefundingAllTickets :: TxInfo -> RaffleDatum -> Bool
 txIsRefundingAllTickets txInfo RaffleDatum {..} =
   "The transaction must pay the ticket price back to each ticket owner."
     `traceIfFalse` pall (txIsPayingPriceToTicketOwner txInfo raffleTicketPrice) raffleTickets
+
+txIsPayingAccumulatedValueToOrganizer :: TxInfo -> RaffleDatum -> Bool
+txIsPayingAccumulatedValueToOrganizer txInfo raffle@RaffleDatum {..} =
+  "The transaction must pay the accumulated value to the raffle organizer."
+    `traceIfFalse` txIsPayingValueTo txInfo (getRaffleAccumulatedValue raffle) raffleOrganizer
 
 txIsRefundingRevealedTickets :: TxInfo -> RaffleDatum -> Bool
 txIsRefundingRevealedTickets txInfo RaffleDatum {..} =
