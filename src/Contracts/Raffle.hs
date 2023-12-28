@@ -179,7 +179,54 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
 
 ------------------------
 
--- | Helper function to check that the correct quantity of the given token is in a Value
+integerToBs :: Integer -> BuiltinByteString
+integerToBs x = integerToBSHelper (if x #< 0 then negate x else x) (x #< 0) emptyByteString
+  where
+    integerToBSHelper :: Integer -> Bool -> BuiltinByteString -> BuiltinByteString
+    integerToBSHelper 0 isNegative acc -- quotient is 0 means x is single-digit
+      | isNegative = consByteString 45 acc -- prepend '-' for negative numbers
+      | otherwise = acc
+    integerToBSHelper x' isNegative acc =
+      let (q, r) = x' `quotRem` 10
+       in integerToBSHelper q isNegative (digitToBS r #<> acc)
+
+    digitToBS :: Integer -> BuiltinByteString
+    digitToBS d = consByteString (48 #+ fromInteger d) emptyByteString -- 48 is ASCII code for '0'
+{-# INLINEABLE integerToBs #-}
+
+bsToInteger :: BuiltinByteString -> Integer
+bsToInteger "" = 0
+bsToInteger bs =
+  let (isNegative, bsTrimmed) =
+        if indexByteString bs 0 == 45 -- ASCII code for '-'
+          then (True, dropByteString 1 bs)
+          else (False, bs)
+   in bytesToInteger $ bsToIntegerHelper bsTrimmed []
+{-# INLINEABLE bsToInteger #-}
+
+bsToIntegerHelper :: BuiltinByteString -> [Integer] -> [Integer]
+bsToIntegerHelper "" acc = acc
+bsToIntegerHelper bs acc =
+  let digit = indexByteString bs 0
+      newAcc = digit : acc
+   in bsToIntegerHelper (dropByteString 1 bs) newAcc
+{-# INLINEABLE bsToIntegerHelper #-}
+
+bytesToInteger :: [Integer] -> Integer
+bytesToInteger bytes =
+  let bytesToIntegerHelper [] acc _ = acc
+      bytesToIntegerHelper (b : bs) acc shiftAmount
+        | b < 0 || b > 255 = error "Invalid byte value"
+        | otherwise = bytesToIntegerHelper bs (acc + (b #* (2 `raisedTo` shiftAmount))) (shiftAmount + 8)
+   in bytesToIntegerHelper bytes 0 0
+{-# INLINEABLE bytesToInteger #-}
+
+raisedTo :: Integer -> Integer -> Integer
+raisedTo _ 0 = 1
+raisedTo x 1 = x
+raisedTo x y = x #* raisedTo x (y #- 1)
+{-# INLINEABLE raisedTo #-}
+
 isInValue :: (CurrencySymbol, TokenName, Integer) -> Value -> Bool
 isInValue (cs, tn, q) = pany (\(cs', tn', q') -> cs' #== cs && tn' #== tn && q #>= q') . flattenValue
 {-# INLINEABLE isInValue #-}
@@ -217,10 +264,6 @@ hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
 tokenNameFromTxOutRef :: TxOutRef -> TokenName
 tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
 {-# INLINEABLE tokenNameFromTxOutRef #-}
-
-integerToBs :: Integer -> BuiltinByteString
-integerToBs = serialiseData . mkI
-{-# INLINEABLE integerToBs #-}
 
 getOwnInputValue :: ScriptContext -> Value
 getOwnInputValue context = case findOwnInput context of
@@ -320,9 +363,12 @@ getUnrevealedValue raffle =
    in lovelaceValueOf (raffleTicketPrice raffle #* plength unRevealedTickets)
 {-# INLINEABLE getUnrevealedValue #-}
 
--- TO DO
 determineRaffleWinner :: RaffleDatum -> PubKeyHash
-determineRaffleWinner = raffleOrganizer
+determineRaffleWinner RaffleDatum {raffleTickets} =
+  let randomSeed = sha2_256 $ mconcat (fromJust . ticketSecret #<$> raffleTickets)
+      winnderID = modulo (bsToInteger randomSeed) (plength raffleTickets)
+      winnerTicket = raffleTickets !! winnderID
+   in ticketOwner winnerTicket
 {-# INLINEABLE determineRaffleWinner #-}
 
 -- | This ensures the link between state token minting policy and current validator
