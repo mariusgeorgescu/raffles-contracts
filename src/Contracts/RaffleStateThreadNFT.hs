@@ -5,12 +5,13 @@
 
 module Contracts.RaffleStateThreadNFT where
 
-import Contracts.Raffle (RaffleDatum (..), RaffleParams (..), RaffleValidatorParams (RaffleValidatorParams), hasUtxo, hasValueWithDatum, isInNewState, isInValue, tokenNameFromTxOutRef)
+import Contracts.Raffle (RaffleDatum (..), RaffleParams (..), RaffleValidatorParams (RaffleValidatorParams), hasGivenInlineDatum, hasUtxo, isInNewState, isInValue, tokenNameFromTxOutRef)
 import Contracts.Raffle qualified as Raffle
 import Contracts.Samples.NFT qualified as NFT
 import Jambhala.Plutus
 import Jambhala.Utils
 import Ledger.Tx.Constraints.TxConstraints (mustPayToOtherScriptWithInlineDatum)
+import Plutus.V1.Ledger.Value (geq)
 import Plutus.V2.Ledger.Api (POSIXTime (POSIXTime, getPOSIXTime))
 
 -- | Custom redeemer type to indicate minting mode.
@@ -106,7 +107,10 @@ hasPrizeAndStateValueWithDatum out raffle@RaffleDatum {..} =
         ( assetClassValue raffleStateTokenAssetClass 1
             #+ rafflePrizeValue
         )
-   in hasValueWithDatum out value raffle
+   in pand
+        [ txOutValue out `geq` value
+        , out `hasGivenInlineDatum` raffle
+        ]
 {-# INLINEABLE hasPrizeAndStateValueWithDatum #-}
 
 -- -- | Untyped version of the parameterized minting policy lambda.

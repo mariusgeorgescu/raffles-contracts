@@ -97,135 +97,134 @@ makeIsDataIndexed
 -- 2. Define Helper Functions & Lambda
 
 raffleLamba :: RaffleValidatorParams -> RaffleDatum -> RaffleRedeemer -> ScriptContext -> Bool
-raffleLamba params datum@RaffleDatum {..} redeemer context =
+raffleLamba params raffle@RaffleDatum {..} redeemer context =
   let txInfo = scriptContextTxInfo context
-      hasStateToken =
-        "The transaction must spend the state token"
-          `traceIfFalse` spendsToken raffleStateTokenAssetClass context
+      txSpendsStateToken =
+        spendsToken raffleStateTokenAssetClass context
       stateTokenIsValid =
         "The raffleStateToken CurrencySymbol must be of the Raffle State Token Minting Policy"
-          `traceIfFalse` raffleHasValidStateTokenCurrencySymbol params datum
-   in if stateTokenIsValid && hasStateToken
+          `traceIfFalse` raffleHasValidStateTokenCurrencySymbol params raffle
+   in if stateTokenIsValid && txSpendsStateToken
         then case redeemer of
           Buy _pkh commits ->
             pand
-              [ "The transaction valid range shoud be before the commit deadline"
-                  `traceIfFalse` (raffleCommitDeadline `after` txInfoValidRange txInfo)
-              , "The maximum no. of tickets must not be reached"
-                  `traceIfFalse` ((plength raffleTickets #+ plength commits) #<= maxNoOfTickets raffleParams)
-              , "The transaction must have an output containing the previous value locked with state token, and with the updated datum inlined, locked at the raffle validator's address."
-                  `traceIfFalse` txHasContinuingOutputWithCorrectValueAndDatum datum redeemer context
+              [ isInNewState raffle txInfo || isInCommitState raffle txInfo
+              , raffleHasAvailableTickets raffle (plength commits)
+              , ctxHasContinuingOutputWithCorrectValueAndDatum context raffle redeemer
               ]
           Reveal revealed_tickets ->
             pand
-              [ "The raffle must be in a valid revealing state"
-                  `traceIfFalse` isInRevealingState datum txInfo
-              , "The transaction must have an output containing the previous value locked with state token, and with the updated datum inlined, locked at the raffle validator's address."
-                  `traceIfFalse` txHasContinuingOutputWithCorrectValueAndDatum datum redeemer context
-              , "The transaction must be signed by each ticket owner"
-                  `traceIfFalse` isSignedByTicketOwners txInfo revealed_tickets
+              [ isInRevealingState raffle txInfo
+              , ctxHasContinuingOutputWithCorrectValueAndDatum context raffle redeemer
+              , txIsSignedByTicketOwners context revealed_tickets
               ]
-          Redeem -> False
+          Redeem ->
+            pand
+              []
           Cancel ->
             pand
-              [ prizeReclaimedByOrganizer datum context
-              , "The raffle must be in a valid new state"
-                  `traceIfFalse` isInNewState datum txInfo
+              [ isInNewState raffle txInfo
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToOrganizer txInfo raffle
               ]
           CloseExpired ->
             pand
-              [ prizeReclaimedByOrganizer datum context
-              , "The raffle must be in a valid expired state"
-                  `traceIfFalse` isInExpiredState datum txInfo
+              [ isInExpiredState raffle txInfo
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToOrganizer txInfo raffle
               ]
           CloseUnderfunded ->
             pand
-              [ prizeReclaimedByOrganizer datum context
-              , "The raffle must be in a valid underfunded state"
-                  `traceIfFalse` isInUnderfundedState datum txInfo
-              , "The transaction must pay the ticket price back to each ticket owner."
-                  `traceIfFalse` isRefundingAllTickets datum context
+              [ isInUnderfundedState raffle txInfo
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToOrganizer txInfo raffle
+              , txIsRefundingAllTickets txInfo raffle
               ]
-          CloseUnrevealed -> False
-          CloseExposedUnderfunded _pkh -> False
-          CloseExposedUnrevealed _pkh -> False
-        else isPayingValueTo context (getOwnInputValue context) (donationPKH raffleParams) --  Only goes to donation PKH
+          CloseExposedUnderfunded pkh ->
+            pand
+              [ isInUnderfundedExposedState raffle txInfo
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToPKH txInfo raffle pkh
+              , txIsRefundingAllTickets txInfo raffle
+              ]
+          CloseUnrevealed ->
+            pand
+              [ isInUnrevealedState raffle txInfo
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToOrganizer txInfo raffle
+              , txIsRefundingRevealedTickets txInfo raffle
+              , txIsPayingUnrevealedValueToPKH txInfo raffle raffleOrganizer
+              ]
+          CloseExposedUnrevealed pkh ->
+            pand
+              [ isInUnrevealedExposedState raffle txInfo
+              , txIsPayingPrizeToPKH txInfo raffle pkh
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsRefundingRevealedTickets txInfo raffle
+              , txIsPayingUnrevealedValueToPKH txInfo raffle pkh
+              ]
+        else txIsPayingValueTo txInfo (getOwnInputValue context) (donationPKH raffleParams) --  Any invalid value sent to the raffle address should be spendable only to the raffle's donation PKH
 
-prizeReclaimedByOrganizer :: RaffleDatum -> ScriptContext -> Bool
-prizeReclaimedByOrganizer datum@RaffleDatum {..} context@ScriptContext {scriptContextTxInfo} =
-  pand
-    [ "The transaction must be signed by the raffle organizer"
-        `traceIfFalse` txSignedBy scriptContextTxInfo raffleOrganizer
-    , "The transaction must burn the raffleStateToken"
-        `traceIfFalse` burnStateToken datum context
-    , "The transaction must pay any excess value to the donation pkh"
-        `traceIfFalse` isPayingDonation context datum
-    , "The transaction must pay the prize back to the raffle organizer"
-        `traceIfFalse` isPayingValueTo context rafflePrizeValue raffleOrganizer
-    ]
+---------------
+---------------
+-- UTILITIES --
+---------------
+---------------
 
--- | This ensures the link between state token minting policy and current validator
-raffleHasValidStateTokenCurrencySymbol :: RaffleValidatorParams -> RaffleDatum -> Bool
-raffleHasValidStateTokenCurrencySymbol (RaffleValidatorParams (MintingPolicyHash csbs)) RaffleDatum {..} =
-  csbs #== (unCurrencySymbol . fst . unAssetClass) raffleStateTokenAssetClass
-{-# INLINEABLE raffleHasValidStateTokenCurrencySymbol #-}
+-- | Helper function to check that the correct quantity of the given token is in a Value
+isInValue :: (CurrencySymbol, TokenName, Integer) -> Value -> Bool
+isInValue (cs, tn, q) = pany (\(cs', tn', q') -> cs' #== cs && tn' #== tn && q #>= q') . flattenValue
+{-# INLINEABLE isInValue #-}
 
-------------------BUY RAFFLE -----------
+-- | Helper function to check if a 'TxOut' contains exactly 1 quantity of an AssetClass
+outHas1of :: TxOut -> AssetClass -> Bool
+outHas1of (TxOut _ value _ _) (AssetClass (cs, tn)) = isInValue (cs, tn, 1) value
+{-# INLINEABLE outHas1of #-}
 
--- Checks if a given txout has a value greater than the one received as param and has an inline datum
-hasValueWithDatum :: TxOut -> Value -> RaffleDatum -> Bool
-hasValueWithDatum out value datum =
-  pand
-    [ txOutValue out `geq` value
-    , out `hasGivenInlineDatum` datum
-    ]
-{-# INLINEABLE hasValueWithDatum #-}
+-- | Helper function to check if a 'TxOut' contains a given datum and is inlined.
+hasGivenInlineDatum :: ToData a => TxOut -> a -> Bool
+hasGivenInlineDatum out datum = case txOutDatum out of
+  OutputDatum da -> toBuiltinData datum #== getDatum da
+  _ -> trace "Datum must exsist and must be inlined" False
+{-# INLINEABLE hasGivenInlineDatum #-}
 
-txHasContinuingOutputWithCorrectValueAndDatum :: RaffleDatum -> RaffleRedeemer -> ScriptContext -> Bool
-txHasContinuingOutputWithCorrectValueAndDatum datum redeemer context =
-  let txOutsToRaffleValidator = getContinuingOutputs context
-      updatedDatum = updateRaffle redeemer datum
-      valueOfNewTickets = \old new ->
-        lovelaceValueOf $
-          (plength . raffleTickets) new #- (plength . raffleTickets) old
-      newTicketsValue = valueOfNewTickets datum updatedDatum
-      hasCorrectValueWithDatum = (`hasValueWithDatum` (getOwnInputValue context #+ newTicketsValue))
-   in pany (`hasCorrectValueWithDatum` updatedDatum) txOutsToRaffleValidator
-{-# INLINEABLE txHasContinuingOutputWithCorrectValueAndDatum #-}
+-- | Helper function to check if a 'TxInInfo' contains exactly 1 quantity of an AssetClass
+inputHas1of :: TxInInfo -> AssetClass -> Bool
+inputHas1of = outHas1of . txInInfoResolved
 
------------------------------------------------
+-- | Helper function: check that the validating input contains a given token
+spendsToken :: AssetClass -> ScriptContext -> Bool
+spendsToken proofToken sc =
+  "The transaction must spend the state token"
+    `traceIfFalse` case (`inputHas1of` proofToken) #<$> findOwnInput sc of
+      Nothing -> trace "Own input not found" False
+      Just result -> traceIfFalse ("Token not spent: " #<> (decodeUtf8 . unTokenName . snd . unAssetClass $ proofToken)) result
+{-# INLINEABLE spendsToken #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @New State@ in a given transaction context.
-The function returns 'True' if the following conditions are met:
-     * The commiting deadline should not have been passed.
-     * No tickets should have been bought yet for the current raffle.
--}
-isInNewState :: RaffleDatum -> TxInfo -> Bool
-isInNewState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
-  pand
-    [ "tx valid range is not before commit deadline"
-        `traceIfFalse` (raffleCommitDeadline `after` txInfoValidRange)
-    , "raffleTickets is not empty"
-        `traceIfFalse` pnull raffleTickets
-    ]
-{-# INLINEABLE isInNewState #-}
+-- | Helper function to check that a UTxO is being spent in the transaction.
+hasUtxo :: TxOutRef -> [TxInInfo] -> Bool
+hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
+{-# INLINEABLE hasUtxo #-}
 
------------
+tokenNameFromTxOutRef :: TxOutRef -> TokenName
+tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
+{-# INLINEABLE tokenNameFromTxOutRef #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Expired State@ in a given transaction context.
-The function returns 'True' if the following conditions are met:
-     * The commiting deadline has passed.
-     * No tickets have been bought.
--}
-isInExpiredState :: RaffleDatum -> TxInfo -> Bool
-isInExpiredState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
-  pand
-    [ "tx valid range is not after commit deadline" `traceIfFalse` (raffleCommitDeadline `before` txInfoValidRange)
-    , "raffleTickets is not empty" `traceIfFalse` pnull raffleTickets
-    ]
+integerToBs :: Integer -> BuiltinByteString
+integerToBs = serialiseData . mkI
+{-# INLINEABLE integerToBs #-}
 
------------------------------------------
-------------------BUY TICKETS -----------
+getOwnInputValue :: ScriptContext -> Value
+getOwnInputValue context = case findOwnInput context of
+  Nothing -> traceError "Own input not found"
+  Just (TxInInfo _inOutRef inOut) -> txOutValue inOut
+{-# INLINEABLE getOwnInputValue #-}
+
+----------------------
+----------------------
+-- Raffle Tickets   --
+----------------------
+----------------------
 
 {- |  This function receives a 'PubKeyHash', a 'BuiltinByteString' represeting a secret hash and a '[RaffleTicket]'
 , and returns a new list including a new ticket with 'PubKeyHash' as owner.
@@ -274,153 +273,333 @@ updateRaffle (Reveal newtickets) datum@RaffleDatum {raffleTickets} =
    in datum {raffleTickets = updatedListOfTickets}
 updateRaffle _ _ = error "invalid redeemer to update datum"
 
------------------------------------------
-------------------REVEAL  TICKETS -----------
+----------------------
+----------------------
+-- Raffle Functions --
+----------------------
+----------------------
 
 -- | This is a function which determines the @revealing interval@ for a given 'RaffleDatum'.
-getRevealingInterval :: RaffleDatum -> Interval POSIXTime
-getRevealingInterval RaffleDatum {..} = Interval (LowerBound (Finite raffleCommitDeadline) False) (UpperBound (Finite raffleRevealDeadline) False)
+getRaffleRevealingValidRange :: RaffleDatum -> POSIXTimeRange
+getRaffleRevealingValidRange RaffleDatum {..} = Interval (lowerBound raffleCommitDeadline) (upperBound raffleRevealDeadline)
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Revealing State@ in a given transaction context.
-The function returns 'True' if the following conditions are met:
-     * The commiting deadline has passed.
-     * The revealing deadline have not been passed.
-     * The minimum number of tickets to be sold was reached.
-     * Not all tickets were revealed yet.
--}
-isInRevealingState :: RaffleDatum -> TxInfo -> Bool
-isInRevealingState datum@RaffleDatum {..} TxInfo {..} =
-  pand
-    [ getRevealingInterval datum `contains` txInfoValidRange
-    , plength raffleTickets #>= raffleMinNoOfTickets
-    , pany (isNothing . ticketSecret) raffleTickets
-    ]
+getRaffleCloseUnderfundedValidRange :: RaffleDatum -> POSIXTimeRange
+getRaffleCloseUnderfundedValidRange RaffleDatum {..} = Interval (lowerBound raffleCommitDeadline) (upperBound (raffleCommitDeadline #+ fromInteger (closingWindow raffleParams)))
 
--- | This is a function which checks if a given transaction is signed by each ticket owner.
-isSignedByTicketOwners :: TxInfo -> [RaffleTicket] -> Bool
-isSignedByTicketOwners txInfo = pall ((txInfo `txSignedBy`) . ticketOwner)
-
------------------------------------------
-------------------Cancel -----------
+getRaffleCloseUnrevealedValidRange :: RaffleDatum -> POSIXTimeRange
+getRaffleCloseUnrevealedValidRange RaffleDatum {..} = Interval (lowerBound raffleRevealDeadline) (upperBound (raffleRevealDeadline #+ fromInteger (closingWindow raffleParams)))
 
 getRaffleAccumulatedValue :: RaffleDatum -> Value
 getRaffleAccumulatedValue RaffleDatum {..} = lovelaceValueOf (raffleTicketPrice * plength raffleTickets)
 
-getDonationAmount :: ScriptContext -> RaffleDatum -> Value
-getDonationAmount context raffle@RaffleDatum {..} =
+getRaffleUnrevealedTickets :: RaffleDatum -> [RaffleTicket]
+getRaffleUnrevealedTickets RaffleDatum {..} = filter (isNothing . ticketSecret) raffleTickets
+
+getUnrevealedValue :: RaffleDatum -> Value
+getUnrevealedValue raffle =
+  let unRevealedTickets = getRaffleUnrevealedTickets raffle
+   in lovelaceValueOf (raffleTicketPrice raffle #* plength unRevealedTickets)
+
+-- -- TO DO
+-- determineRaffleWinner :: RaffleDatum -> PubKeyHash
+-- determineRaffleWinner = raffleOrganizer
+
+-- | This ensures the link between state token minting policy and current validator
+raffleHasValidStateTokenCurrencySymbol :: RaffleValidatorParams -> RaffleDatum -> Bool
+raffleHasValidStateTokenCurrencySymbol (RaffleValidatorParams (MintingPolicyHash csbs)) RaffleDatum {..} =
+  csbs #== (unCurrencySymbol . fst . unAssetClass) raffleStateTokenAssetClass
+{-# INLINEABLE raffleHasValidStateTokenCurrencySymbol #-}
+
+raffleHasAvailableTickets :: RaffleDatum -> Integer -> Bool
+raffleHasAvailableTickets RaffleDatum {raffleParams, raffleTickets} noOfNewTickets =
+  "The maximum no. of tickets must not be reached"
+    `traceIfFalse` ((plength raffleTickets #+ noOfNewTickets) #<= maxNoOfTickets raffleParams)
+
+------------------
+------------------
+-- Check States --
+------------------
+------------------
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @New State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline have not passed.
+     * The tickets list must be empty.
+-}
+isInNewState :: RaffleDatum -> TxInfo -> Bool
+isInNewState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid new state"
+    `traceIfFalse` pand
+      [ "tx valid range is not before commit deadline"
+          `traceIfFalse` (raffleCommitDeadline `after` txInfoValidRange)
+      , "raffleTickets is not empty"
+          `traceIfFalse` pnull raffleTickets
+      ]
+{-# INLINEABLE isInNewState #-}
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Expired State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline has passed.
+     * The tickets list must be empty.
+-}
+isInExpiredState :: RaffleDatum -> TxInfo -> Bool
+isInExpiredState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid expired state"
+    `traceIfFalse` pand
+      [ "tx valid range is not after commit deadline"
+          `traceIfFalse` (raffleCommitDeadline `before` txInfoValidRange)
+      , "raffleTickets is not empty"
+          `traceIfFalse` pnull raffleTickets
+      ]
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Committing State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline have not passed.
+     * At least one ticket have been bought for the current raffle.
+-}
+isInCommitState :: RaffleDatum -> TxInfo -> Bool
+isInCommitState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
+  pand
+    [ "tx valid range is not before commit deadline"
+        `traceIfFalse` (raffleCommitDeadline `after` txInfoValidRange)
+    , "raffleTickets must not be empty " `traceIfFalse` (not . pnull) raffleTickets
+    ]
+{-# INLINEABLE isInCommitState #-}
+
+{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline has passed.
+     * Tickets have been bought.
+     * The minimum amount was not reached.
+     * The closing deadline (closing window after committing deadline) has not passed.
+-}
+isInUnderfundedState :: RaffleDatum -> TxInfo -> Bool
+isInUnderfundedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid underfunded state"
+    `traceIfFalse` pand
+      [ "tx valid range must be between commit deadline and commit deadline + closing widnow"
+          `traceIfFalse` (getRaffleCloseUnderfundedValidRange raffle `contains` txInfoValidRange)
+      , "raffleTickets must not be empty "
+          `traceIfFalse` (not . pnull) raffleTickets
+      , "sold tickets must be less than min. no. of tickets"
+          `traceIfFalse` ((#< raffleMinNoOfTickets) . plength $ raffleTickets)
+      ]
+{-# INLINEABLE isInUnderfundedState #-}
+
+{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded Exposed State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline has passed.
+     * Tickets have been bought.
+     * The minimum amount was not reached.
+     * The closing deadline (closing window after committing deadline) has passed.
+-}
+isInUnderfundedExposedState :: RaffleDatum -> TxInfo -> Bool
+isInUnderfundedExposedState RaffleDatum {..} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid underfunded exposed state"
+    `traceIfFalse` pand
+      [ "tx valid range must be after commit deadline + closing widnow"
+          `traceIfFalse` ((raffleCommitDeadline #+ fromInteger (closingWindow raffleParams)) `before` txInfoValidRange)
+      , "raffleTickets must not be empty "
+          `traceIfFalse` (not . pnull) raffleTickets
+      , "sold tickets must be less than min. no. of tickets"
+          `traceIfFalse` ((#< raffleMinNoOfTickets) . plength $ raffleTickets)
+      ]
+{-# INLINEABLE isInUnderfundedExposedState #-}
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Revealing State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline has passed.
+     * The minimum number of tickets to be sold was reached. (which implies that tickets have been bought)
+     * Not all tickets were revealed yet.
+     * The revealing deadline have not been passed.
+-}
+isInRevealingState :: RaffleDatum -> TxInfo -> Bool
+isInRevealingState datum@RaffleDatum {..} TxInfo {..} =
+  "The raffle must be in a valid revealing state"
+    `traceIfFalse` pand
+      [ "not in revealing interval"
+          `traceIfFalse` (getRaffleRevealingValidRange datum `contains` txInfoValidRange)
+      , "min. no. of tickets not met"
+          `traceIfFalse` (plength raffleTickets #>= raffleMinNoOfTickets)
+      , "no unrevealed tickets found"
+          `traceIfFalse` pany (isNothing . ticketSecret) raffleTickets
+      ]
+{-# INLINEABLE isInRevealingState #-}
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Unrevealed State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The revealing deadline has passed.
+     * The minimum number of tickets to be sold was reached. (which implies that tickets have been bought)
+     * Not all ticket secrets where revealed.
+     * The closing deadline (closing window after revealing deadline) have not passed.
+-}
+isInUnrevealedState :: RaffleDatum -> TxInfo -> Bool
+isInUnrevealedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid unrevealed state"
+    `traceIfFalse` pand
+      [ "tx valid range must be between reveal deadline and reveal deadline + closing widnow"
+          `traceIfFalse` (getRaffleCloseUnrevealedValidRange raffle `contains` txInfoValidRange)
+      , "unrevealed tickets must exists"
+          `traceIfFalse` pany (isNothing . ticketSecret) raffleTickets
+      , "min. no. of tickets must have been sold"
+          `traceIfFalse` ((#>= raffleMinNoOfTickets) . plength $ raffleTickets)
+      ]
+{-# INLINEABLE isInUnrevealedState #-}
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Unrevealed State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The revealing deadline has passed.
+     * The minimum number of tickets to be sold was reached. (which implies that tickets have been bought)
+     * Not all ticket secrets where revealed.
+     * The closing deadline (closing window after revealing deadline) has passed.
+-}
+isInUnrevealedExposedState :: RaffleDatum -> TxInfo -> Bool
+isInUnrevealedExposedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid unrevealed  exposed state"
+    `traceIfFalse` pand
+      [ "tx valid range must be after reveal deadline + closing widnow"
+          `traceIfFalse` ((raffleRevealDeadline #+ fromInteger (closingWindow raffleParams)) `before` txInfoValidRange)
+      , "unrevealed tickets must exists"
+          `traceIfFalse` (not . pnull) (getRaffleUnrevealedTickets raffle)
+      , "min. no. of tickets must have been sold"
+          `traceIfFalse` ((#>= raffleMinNoOfTickets) . plength $ raffleTickets)
+      ]
+
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Winner Selected By CRS State@, in a given transaction context.
+The function returns 'True' if the following conditions are met:
+     * The commiting deadline should not have been passed.
+     * At least one ticket have been bought for the current raffle.
+-}
+isWinnerSelectedByCRS :: RaffleDatum -> TxInfo -> Bool
+isWinnerSelectedByCRS RaffleDatum {..} TxInfo {txInfoValidRange} =
+  "The raffle must be in a valid Winner Selected by CRS state"
+    `traceIfFalse` pand
+      [ "tx valid range must be after revealing deadline" `traceIfFalse` (raffleRevealDeadline `before` txInfoValidRange)
+      , "all tickets must be revealed" `traceIfFalse` pall (isJust . ticketSecret) raffleTickets
+      ]
+{-# INLINEABLE isWinnerSelectedByCRS #-}
+
+------------------
+------------------
+-- RAFFLE IN TX --
+------------------
+------------------
+
+txIsBurningStateToken :: TxInfo -> RaffleDatum -> Bool
+txIsBurningStateToken TxInfo {txInfoMint} RaffleDatum {raffleStateTokenAssetClass} =
+  let AssetClass (policyCurrencySymbol, stateTokenName) = raffleStateTokenAssetClass
+   in isInValue (policyCurrencySymbol, stateTokenName, -1) txInfoMint
+
+txIsPayingValueTo :: TxInfo -> Value -> PubKeyHash -> Bool
+txIsPayingValueTo txInfo value pkh =
+  let txOutsToPKH = filter ((#== pubKeyHashAddress pkh) . txOutAddress) (txInfoOutputs txInfo)
+      paidValue = psum (txOutValue #<$> txOutsToPKH)
+   in paidValue `geq` value
+
+txIsPayingPrizeToPKH :: TxInfo -> RaffleDatum -> PubKeyHash -> Bool
+txIsPayingPrizeToPKH txInfo RaffleDatum {..} pkh =
+  pand
+    [ "The transaction must pay the prize back to the pkh"
+        `traceIfFalse` txIsPayingValueTo txInfo rafflePrizeValue pkh
+    ]
+
+txIsPayingPrizeToOrganizer :: TxInfo -> RaffleDatum -> Bool
+txIsPayingPrizeToOrganizer txInfo RaffleDatum {..} =
+  pand
+    [ "The transaction must be signed by the raffle organizer"
+        `traceIfFalse` txSignedBy txInfo raffleOrganizer
+    , "The transaction must pay the prize back to the raffle organizer"
+        `traceIfFalse` txIsPayingValueTo txInfo rafflePrizeValue raffleOrganizer
+    ]
+
+txIsPayingPriceToTicketOwner :: TxInfo -> Integer -> RaffleTicket -> Bool
+txIsPayingPriceToTicketOwner txInfo price RaffleTicket {..} = txIsPayingValueTo txInfo (lovelaceValueOf price) ticketOwner
+
+txIsRefundingAllTickets :: TxInfo -> RaffleDatum -> Bool
+txIsRefundingAllTickets txInfo RaffleDatum {..} =
+  "The transaction must pay the ticket price back to each ticket owner."
+    `traceIfFalse` pall (txIsPayingPriceToTicketOwner txInfo raffleTicketPrice) raffleTickets
+
+txIsRefundingRevealedTickets :: TxInfo -> RaffleDatum -> Bool
+txIsRefundingRevealedTickets txInfo RaffleDatum {..} =
+  "The transaction must pay the ticket price back to each ticket owner who revealed the ticket secret."
+    `traceIfFalse` pall (txIsPayingPriceToTicketOwner txInfo raffleTicketPrice) (filter (isJust . ticketSecret) raffleTickets)
+
+-- | This is a function which checks if a given transaction is signed by each ticket owner.
+txIsSignedByTicketOwners :: ScriptContext -> [RaffleTicket] -> Bool
+txIsSignedByTicketOwners ScriptContext {scriptContextTxInfo} tickets =
+  "The transaction must be signed by each ticket owner"
+    `traceIfFalse` pall ((scriptContextTxInfo `txSignedBy`) . ticketOwner) tickets
+
+txIsPayingUnrevealedValueToPKH :: TxInfo -> RaffleDatum -> PubKeyHash -> Bool
+txIsPayingUnrevealedValueToPKH txInfo datum pkh =
+  "The transaction must pay the amount for the unrevealed tickets to the pkh"
+    `traceIfFalse` txIsPayingValueTo txInfo (getUnrevealedValue datum) pkh
+
+-----------------------
+-----------------------
+-- RAFFLE IN CONTEXT --
+-----------------------
+-----------------------
+
+ctxGetExtraAmount :: ScriptContext -> RaffleDatum -> Value
+ctxGetExtraAmount context raffle@RaffleDatum {..} =
   getOwnInputValue context
     #- ( getRaffleAccumulatedValue raffle
           #+ rafflePrizeValue
           #+ assetClassValue raffleStateTokenAssetClass 1
        )
 
-getUnrevealedValue :: RaffleDatum -> Value
-getUnrevealedValue RaffleDatum {..} =
-  let unRevealedTickets = filter (isNothing . ticketSecret) raffleTickets
-   in lovelaceValueOf (raffleTicketPrice * plength unRevealedTickets)
+ctxIsPayingDonation :: ScriptContext -> RaffleDatum -> Bool
+ctxIsPayingDonation context@ScriptContext {scriptContextTxInfo} raffle@RaffleDatum {..} = txIsPayingValueTo scriptContextTxInfo (ctxGetExtraAmount context raffle) (donationPKH raffleParams)
 
-isPayingDonation :: ScriptContext -> RaffleDatum -> Bool
-isPayingDonation context raffle@RaffleDatum {..} = isPayingValueTo context (getDonationAmount context raffle) (donationPKH raffleParams)
-
-isPayingValueTo :: ScriptContext -> Value -> PubKeyHash -> Bool
-isPayingValueTo ScriptContext {scriptContextTxInfo} value pkh =
-  let txOutsToPKH = filter ((#== pubKeyHashAddress pkh) . txOutAddress) (txInfoOutputs scriptContextTxInfo)
-      paidValue = psum (txOutValue #<$> txOutsToPKH)
-   in paidValue `geq` value
-
--- TO DO
-determineRaffleWinner :: RaffleDatum -> PubKeyHash
-determineRaffleWinner = raffleOrganizer
-
-burnStateToken :: RaffleDatum -> ScriptContext -> Bool
-burnStateToken RaffleDatum {raffleStateTokenAssetClass} (ScriptContext TxInfo {txInfoMint} _) =
-  let AssetClass (policyCurrencySymbol, stateTokenName) = raffleStateTokenAssetClass
-   in isInValue (policyCurrencySymbol, stateTokenName, -1) txInfoMint
-
----------------
----------------
--- UTILITIES --
----------------
----------------
-
--- | Helper function to check that the correct quantity of the given token is in a Value
-isInValue :: (CurrencySymbol, TokenName, Integer) -> Value -> Bool
-isInValue (cs, tn, q) = pany (\(cs', tn', q') -> cs' #== cs && tn' #== tn && q #>= q') . flattenValue
-{-# INLINEABLE isInValue #-}
-
--- | Helper function to check if a 'TxOut' contains exactly 1 quantity of an AssetClass
-outHas1of :: TxOut -> AssetClass -> Bool
-outHas1of (TxOut _ value _ _) (AssetClass (cs, tn)) = isInValue (cs, tn, 1) value
-{-# INLINEABLE outHas1of #-}
-
--- | Helper function to check if a 'TxOut' contains a given datum and is inlined.
-hasGivenInlineDatum :: ToData a => TxOut -> a -> Bool
-hasGivenInlineDatum out datum = case txOutDatum out of
-  OutputDatum da -> toBuiltinData datum #== getDatum da
-  _ -> trace "Datum must exsist and must be inlined" False
-{-# INLINEABLE hasGivenInlineDatum #-}
-
--- | Helper function to check if a 'TxInInfo' contains exactly 1 quantity of an AssetClass
-inputHas1of :: TxInInfo -> AssetClass -> Bool
-inputHas1of = outHas1of . txInInfoResolved
-
--- | Helper function: check that the validating input contains a given token
-spendsToken :: AssetClass -> ScriptContext -> Bool
-spendsToken proofToken sc = case (`inputHas1of` proofToken) #<$> findOwnInput sc of
-  Nothing -> trace "Own input not found" False
-  Just result -> traceIfFalse ("Token not spent: " #<> (decodeUtf8 . unTokenName . snd . unAssetClass $ proofToken)) result
-{-# INLINEABLE spendsToken #-}
-
--- | Helper function to check that a UTxO is being spent in the transaction.
-hasUtxo :: TxOutRef -> [TxInInfo] -> Bool
-hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
-{-# INLINEABLE hasUtxo #-}
-
-tokenNameFromTxOutRef :: TxOutRef -> TokenName
-tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
-{-# INLINEABLE tokenNameFromTxOutRef #-}
-
-integerToBs :: Integer -> BuiltinByteString
-integerToBs = serialiseData . mkI
-{-# INLINEABLE integerToBs #-}
-
-getOwnInputValue :: ScriptContext -> Value
-getOwnInputValue context = case findOwnInput context of
-  Nothing -> traceError "Own input not found"
-  Just (TxInInfo _inOutRef inOut) -> txOutValue inOut
-{-# INLINEABLE getOwnInputValue #-}
-
-------------------------------------
-------------------Underfunded -----------
-
-{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded State@ in a given transaction context.
-The function returns 'True' if the following conditions are met:
-     * The commiting deadline has passed.
-     * Tickets have been bought.
-     * The minimum amount was not reached.
--}
-isInUnderfundedState :: RaffleDatum -> TxInfo -> Bool
-isInUnderfundedState RaffleDatum {..} TxInfo {txInfoValidRange} =
+ctxIsBurningStateTokenAndPayingAnyExtraToDonation :: ScriptContext -> RaffleDatum -> Bool
+ctxIsBurningStateTokenAndPayingAnyExtraToDonation context@ScriptContext {scriptContextTxInfo} raffle =
   pand
-    [ "tx valid range is not after commit deadline" `traceIfFalse` (raffleCommitDeadline `before` txInfoValidRange)
-    , "raffleTickets is empty" `traceIfFalse` (not . pnull) raffleTickets
-    , "not underfunded" `traceIfFalse` ((#< raffleMinNoOfTickets) . plength $ raffleTickets)
+    [ traceIfFalse
+        "The transaction must burn the raffleStateToken"
+        (txIsBurningStateToken scriptContextTxInfo raffle)
+    , traceIfFalse
+        "The transaction must pay any excess value to the donation pkh"
+        (ctxIsPayingDonation context raffle)
     ]
 
-isPayingPriceToTicketOwner :: ScriptContext -> Integer -> RaffleTicket -> Bool
-isPayingPriceToTicketOwner context price RaffleTicket {..} = isPayingValueTo context (lovelaceValueOf price) ticketOwner
+-- | The transaction must have an output containing the previous value locked with state token, and with the updated datum inlined, locked at the raffle validator's address.
+ctxHasContinuingOutputWithCorrectValueAndDatum :: ScriptContext -> RaffleDatum -> RaffleRedeemer -> Bool
+ctxHasContinuingOutputWithCorrectValueAndDatum context datum redeemer =
+  let txOutsToRaffleValidator = getContinuingOutputs context
+      updatedDatum = updateRaffle redeemer datum
+      valueOfNewTickets = \old new ->
+        lovelaceValueOf $
+          (plength . raffleTickets) new #- (plength . raffleTickets) old
+      newTicketsValue = valueOfNewTickets datum updatedDatum
+      outHasCorrectValueWithDatum =
+        ( \out ->
+            pand
+              [ txOutValue out `geq` (getOwnInputValue context #+ newTicketsValue)
+              , out `hasGivenInlineDatum` updatedDatum
+              ]
+        )
+   in traceIfFalse
+        "No valid continuing output found !"
+        (pany outHasCorrectValueWithDatum txOutsToRaffleValidator)
+{-# INLINEABLE ctxHasContinuingOutputWithCorrectValueAndDatum #-}
 
-isRefundingAllTickets :: RaffleDatum -> ScriptContext -> Bool
-isRefundingAllTickets RaffleDatum {..} context = pall (isPayingPriceToTicketOwner context raffleTicketPrice) raffleTickets
-
------------
------------
--- --------
+------------------------------------
 --------
 --------
 --------
 --------
----------
+--------
+--------
+--------
+--------
+--------
+--------
+--------
+--------
+--------
+------------------------------------
 
 -- | Untyped version of the spending validator lambda.
 untypedLambda :: RaffleValidatorParams -> UntypedValidator -- BuiltinData -> BuiltinData -> BuiltinData -> ()
