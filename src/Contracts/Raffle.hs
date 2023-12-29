@@ -180,15 +180,15 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
 ------------------------
 
 integerToBs :: Integer -> BuiltinByteString
-integerToBs x = integerToBSHelper (if x #< 0 then negate x else x) (x #< 0) emptyByteString
+integerToBs x = integerToBSHelper (if x #< 0 then pnegate x else x) (x #< 0) emptyByteString
   where
     integerToBSHelper :: Integer -> Bool -> BuiltinByteString -> BuiltinByteString
-    integerToBSHelper 0 isNegative acc -- quotient is 0 means x is single-digit
-      | isNegative = consByteString 45 acc -- prepend '-' for negative numbers
-      | otherwise = acc
-    integerToBSHelper x' isNegative acc =
-      let (q, r) = x' `quotRem` 10
-       in integerToBSHelper q isNegative (digitToBS r #<> acc)
+    integerToBSHelper x' isNegative acc -- quotient is 0 means x is single-digit
+      | x' #== 0 && isNegative = consByteString 45 acc -- prepend '-' for negative numbers
+      | x' #== 0 && isNegative #== False = acc
+      | otherwise =
+        let (q, r) = x' `quotRem` 10
+         in integerToBSHelper q isNegative (digitToBS r #<> acc)
 
     digitToBS :: Integer -> BuiltinByteString
     digitToBS d = consByteString (48 #+ fromInteger d) emptyByteString -- 48 is ASCII code for '0'
@@ -198,7 +198,7 @@ bsToInteger :: BuiltinByteString -> Integer
 bsToInteger "" = 0
 bsToInteger bs =
   let (isNegative, bsTrimmed) =
-        if indexByteString bs 0 == 45 -- ASCII code for '-'
+        if indexByteString bs 0 #== 45 -- ASCII code for '-'
           then (True, dropByteString 1 bs)
           else (False, bs)
    in bytesToInteger $ bsToIntegerHelper bsTrimmed []
