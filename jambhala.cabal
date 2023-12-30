@@ -42,6 +42,7 @@ library
     Jambhala.Plutus
     Jambhala.Utils
     Prelude
+    TestRaffle
 
   -- Add new contracts here, i.e.:
   -- Contracts.MyContract
@@ -92,6 +93,7 @@ library
     , plutus-ledger
     , plutus-ledger-api
     , plutus-script-utils
+    , plutus-simple-model
     , plutus-tx
     , plutus-tx-constraints
     , plutus-tx-plugin
@@ -100,7 +102,6 @@ library
     , text
     , time
     , turtle
-    , plutus-simple-model
 
   default-extensions:
     DataKinds
