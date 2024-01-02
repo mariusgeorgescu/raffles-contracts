@@ -65,7 +65,7 @@ createRaffle ownAddr mpParams validatorParams raffle vh = do
               GYTxOut
                 { gyTxOutAddress = raffleValidatorAddress
                 , gyTxOutDatum = Just (datumFromPlutusData (raffle2), GYTxOutUseInlineDatum)
-                , gyTxOutValue = prizeVal <> valueSingleton (stateTokenAssetClassGY) 1 <> valueFromLovelace 2_500_000
+                , gyTxOutValue = prizeVal <> valueSingleton (stateTokenAssetClassGY) 1  
                 , gyTxOutRefS = Nothing
                 }
           , mustBeSignedBy ownpkh

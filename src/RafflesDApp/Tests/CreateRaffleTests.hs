@@ -41,14 +41,14 @@ mintStateTokenRun tn = do
 
 createRaffleTrace :: Wallets -> Run ()
 createRaffleTrace ws@Wallets {..} = do
-  --   --First step: Get the required parameter
-  --   let tn1 = fromJust $ tokenNameFromPlutus (tokenName "alabala")
-  --   void $ runWallet w1 $ mintStateTokenRun tn1
+  --First step: Get the required parameter
+  let tn1 = fromJust $ tokenNameFromPlutus (tokenName "alabala")
+  ac <- runWallet w1 $ mintStateTokenRun tn1
   void $
     -- following operations are ran by first wallet, `w1`
     runWallet w1 $
       do
-        createRaffleRun sampleRafflePrams sampleRaffleValidatorParams (sampleRaffleNew {rafflePrizeValue = lovelaceValueOf 7_100_000}) sampleRaffleValidatorHash
+        createRaffleRun sampleRafflePrams sampleRaffleValidatorParams (sampleRaffleNew {rafflePrizeValue = valueToPlutus (valueSingleton (fromJust ac) 1)}) sampleRaffleValidatorHash
 
 runTest = defaultMain $ testGroup "CreateRaffles" [createRaffleTests]
 
