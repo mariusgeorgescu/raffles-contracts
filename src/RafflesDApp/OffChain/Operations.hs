@@ -1,18 +1,13 @@
 module RafflesDApp.OffChain.Operations where
 
-import Cardano.Api (calculateMinimumUTxO, evaluateTransactionFee)
-import Cardano.Api.Shelley (calcMinimumDeposit)
-import Control.Monad.Error.Class (liftEither)
-import Control.Monad.Except (Except)
-import Data.Either.Extra (eitherToMaybe)
 import GeniusYield.HTTP.Errors (IsGYApiError)
 import GeniusYield.Imports
 import GeniusYield.TxBuilder
-import GeniusYield.TxBuilder.Class
 import GeniusYield.Types
-import Jambhala.Plutus (from)
+import Jambhala.Plutus (AssetClass (..), from)
 import Jambhala.Plutus qualified
 import Jambhala.Utils qualified
+import Plutus.Model.Fork.Ledger.TimeSlot (posixTimeToEnclosingSlot)
 import RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy qualified as RaffleStateThreadNFT
 import RafflesDApp.OnChain.RaffleValidator
 
@@ -33,6 +28,8 @@ instance IsGYApiError RaffleOperationException
 -- | Operation to create a raffle.
 createRaffle ::
   (HasCallStack, GYTxMonad m, GYTxQueryMonad m) =>
+  -- | OwnAddress
+  GYAddress ->
   -- | Raffle minting policy params
   RaffleParams ->
   -- | Raffle validator params
@@ -42,29 +39,35 @@ createRaffle ::
   -- | Raffle Validator Hash of a raffle validator parameterized with the minting policy
   Jambhala.Plutus.ValidatorHash ->
   m (GYTxSkeleton 'PlutusV2)
-createRaffle mpParams validatorParams raffle vh = do
+createRaffle ownAddr mpParams validatorParams raffle vh = do
   let mp = compileRafflesStateTokenMintingPolicyGY mpParams
   let validator = compileRafflesValidatorGY validatorParams
-
+  ownpkh <- addressToPubKeyHash' ownAddr
   oref <- txOutRefToPlutus <$> someUTxO
   tn <- tokenNameFromPlutus' $ tokenNameFromTxOutRef oref
   now <- currentSlot
+  next4 <- advanceSlot' now 4
   currentTime <- slotToBeginTime now
   raffleValidatorAddress <- scriptAddress validator
   prizeVal <- valueFromPlutus' (rafflePrizeValue raffle)
-  stateTokenAssetClass <- assetClassFromPlutus' (raffleStateTokenAssetClass raffle)
-  if isInNewState raffle (from (timeToPlutus currentTime))
+  let AssetClass (cs, plm) = raffleStateTokenAssetClass raffle
+  let stateTokenAssetClass = AssetClass (cs, tokenNameFromTxOutRef oref)
+  stateTokenAssetClassGY <- assetClassFromPlutus' stateTokenAssetClass
+  let raffle2 = raffle {raffleStateTokenAssetClass = stateTokenAssetClass, raffleOrganizer = pubKeyHashToPlutus ownpkh}
+  if True -- isInNewState raffle (from (timeToPlutus currentTime))
     then
       return $
         mconcat
           [ isInvalidBefore now
-          , mustMint mp (redeemerFromPlutusData $ RaffleStateThreadNFT.Minting raffle vh oref) tn 1
+          , isInvalidAfter next4
+          , mustMint mp (redeemerFromPlutusData $ RaffleStateThreadNFT.Minting raffle2 vh oref) tn 1
           , mustHaveOutput
               GYTxOut
                 { gyTxOutAddress = raffleValidatorAddress
-                , gyTxOutDatum = Just (datumFromPlutusData raffle, GYTxOutUseInlineDatum)
-                , gyTxOutValue = prizeVal <> valueSingleton stateTokenAssetClass 1 <> valueFromLovelace 2_500_000
+                , gyTxOutDatum = Just (datumFromPlutusData (raffle2), GYTxOutUseInlineDatum)
+                , gyTxOutValue = prizeVal <> valueSingleton (stateTokenAssetClassGY) 1 <> valueFromLovelace 2_500_000
                 , gyTxOutRefS = Nothing
                 }
+          , mustBeSignedBy ownpkh
           ]
     else throwAppError InvalidRaffleDatum

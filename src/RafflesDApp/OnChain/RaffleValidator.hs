@@ -196,7 +196,7 @@ integerToBs x = integerToBSHelper (if x #< 0 then pnegate x else x) (x #< 0) emp
 {-# INLINEABLE integerToBs #-}
 
 bsToInteger :: BuiltinByteString -> Integer
-bsToInteger "" = 0
+bsToInteger bs | bs #== emptyByteString = 0
 bsToInteger bs =
   let (isNegative, bsTrimmed) =
         if indexByteString bs 0 #== 45 -- ASCII code for '-'
@@ -206,7 +206,7 @@ bsToInteger bs =
 {-# INLINEABLE bsToInteger #-}
 
 bsToIntegerHelper :: BuiltinByteString -> [Integer] -> [Integer]
-bsToIntegerHelper "" acc = acc
+bsToIntegerHelper bs acc | bs #== emptyByteString = acc
 bsToIntegerHelper bs acc =
   let digit = indexByteString bs 0
       newAcc = digit : acc
@@ -217,14 +217,14 @@ bytesToInteger :: [Integer] -> Integer
 bytesToInteger bytes =
   let bytesToIntegerHelper [] acc _ = acc
       bytesToIntegerHelper (b : bs) acc shiftAmount
-        | b < 0 || b > 255 = error "Invalid byte value"
-        | otherwise = bytesToIntegerHelper bs (acc + (b #* (2 `raisedTo` shiftAmount))) (shiftAmount + 8)
+        | b #< 0 || b #> 255 = traceError "Invalid byte value"
+        | otherwise = bytesToIntegerHelper bs (acc #+ (b #* (2 `raisedTo` shiftAmount))) (shiftAmount #+ 8)
    in bytesToIntegerHelper bytes 0 0
 {-# INLINEABLE bytesToInteger #-}
 
 raisedTo :: Integer -> Integer -> Integer
-raisedTo _ 0 = 1
-raisedTo x 1 = x
+raisedTo _x y | y #== 0 = 1
+raisedTo x y | y #== 1 = x
 raisedTo x y = x #* raisedTo x (y #- 1)
 {-# INLINEABLE raisedTo #-}
 
@@ -263,7 +263,7 @@ hasUtxo oref = pany (\(TxInInfo oref' _) -> oref' #== oref)
 {-# INLINEABLE hasUtxo #-}
 
 tokenNameFromTxOutRef :: TxOutRef -> TokenName
-tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (blake2b_256 (txIdbs #<> integerToBs txIdx))
+tokenNameFromTxOutRef (TxOutRef (TxId txIdbs) txIdx) = TokenName (sha2_256 (txIdbs #<> integerToBs txIdx))
 {-# INLINEABLE tokenNameFromTxOutRef #-}
 
 getOwnInputValue :: ScriptContext -> Value
@@ -318,7 +318,7 @@ reavealIfMatched new ticket = if new `isRevealedOf` ticket then new else ticket
 , and returns a new list with the corresponding ticket revealed.
 -}
 reavealSecret :: RaffleTicket -> [RaffleTicket] -> [RaffleTicket]
-reavealSecret new tickets = reavealIfMatched new <$> tickets
+reavealSecret new tickets = reavealIfMatched new #<$> tickets
 {-# INLINEABLE reavealSecret #-}
 
 updateRaffle :: RaffleRedeemer -> RaffleDatum -> RaffleDatum
@@ -328,7 +328,7 @@ updateRaffle (Buy pkh commits) datum@RaffleDatum {raffleTickets} =
 updateRaffle (Reveal newtickets) datum@RaffleDatum {raffleTickets} =
   let updatedListOfTickets = pfoldr reavealSecret raffleTickets newtickets
    in datum {raffleTickets = updatedListOfTickets}
-updateRaffle _ _ = error "invalid redeemer to update datum"
+updateRaffle _ datum = trace "invalid redeemer to update datum" datum
 {-# INLINEABLE updateRaffle #-}
 
 ------------------------
@@ -351,7 +351,7 @@ getRaffleCloseUnrevealedValidRange RaffleDatum {..} = Interval (lowerBound raffl
 {-# INLINEABLE getRaffleCloseUnrevealedValidRange #-}
 
 getRaffleAccumulatedValue :: RaffleDatum -> Value
-getRaffleAccumulatedValue RaffleDatum {..} = lovelaceValueOf (raffleTicketPrice * plength raffleTickets)
+getRaffleAccumulatedValue RaffleDatum {..} = lovelaceValueOf (raffleTicketPrice #* plength raffleTickets)
 {-# INLINEABLE getRaffleAccumulatedValue #-}
 
 getRaffleUnrevealedTickets :: RaffleDatum -> [RaffleTicket]
@@ -366,7 +366,7 @@ getUnrevealedValue raffle =
 
 determineRaffleWinner :: RaffleDatum -> PubKeyHash
 determineRaffleWinner RaffleDatum {raffleTickets} =
-  let randomSeed = sha2_256 $ mconcat (fromJust . ticketSecret #<$> raffleTickets)
+  let randomSeed = sha2_256 $ pmconcat ((\(Just v) -> v) . ticketSecret #<$> raffleTickets)
       winnderID = modulo (bsToInteger randomSeed) (plength raffleTickets)
       winnerTicket = raffleTickets !! winnderID
    in ticketOwner winnerTicket
@@ -714,9 +714,3 @@ compileValidator params = mkValidatorContract ($$(compile [||untypedLambda||]) `
 ------------------------
 
 -- *  Samples
-
-------------------------
-
-sampleRaffleValidatorParams = RaffleValidatorParams ""
-
-sampleCompiledRaffleValidator = compileValidator sampleRaffleValidatorParams

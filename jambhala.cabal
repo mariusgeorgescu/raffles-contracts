@@ -40,6 +40,10 @@ library
     Jambhala.Plutus
     Jambhala.Utils
     Prelude
+    RafflesDApp.OffChain.Operations
+    RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy
+    RafflesDApp.OnChain.RaffleValidator
+    RafflesDApp.Tests.CreateRaffleTests
     TestRaffle
 
   -- Add new contracts here, i.e.:
@@ -64,9 +68,6 @@ library
     Jambhala.CLI.Types
     Jambhala.CLI.Update
     Jambhala.CLI.Update.Parsers
-    RafflesDApp.OffChain.Operations
-    RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy
-    RafflesDApp.OnChain.RaffleValidator
 
   -- Sample contracts:
   hs-source-dirs:     src
@@ -100,6 +101,7 @@ library
     , plutus-tx-plugin
     , row-types
     , serialise
+    , tasty
     , text
     , time
     , turtle

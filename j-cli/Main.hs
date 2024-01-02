@@ -1,9 +1,13 @@
 module Main where
 
-import Contracts (contracts, samples)
-import Jambhala.CLI (runJamb)
-
+import RafflesDApp.Tests.CreateRaffleTests ( runTest )
 main :: IO ()
-main = runJamb allContracts -- << replace `allContracts` with `contracts` to hide sample contracts
-  where
-    allContracts = contracts <> samples
+main = runTest
+
+-- import Contracts (contracts, samples)
+-- import Jambhala.CLI (runJamb)
+
+-- main :: IO ()
+-- main = runJamb allContracts -- << replace `allContracts` with `contracts` to hide sample contracts
+--   where
+--     allContracts = contracts <> samples

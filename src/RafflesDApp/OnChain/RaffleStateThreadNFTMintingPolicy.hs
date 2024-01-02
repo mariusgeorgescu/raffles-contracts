@@ -10,7 +10,7 @@ import Jambhala.Plutus
 import Jambhala.Utils
 import Ledger.Tx.Constraints.TxConstraints (mustPayToOtherScriptWithInlineDatum)
 import Plutus.V1.Ledger.Value (geq)
-import Plutus.V2.Ledger.Api (POSIXTime (POSIXTime, getPOSIXTime))
+import Plutus.V2.Ledger.Api (POSIXTime (POSIXTime))
 import RafflesDApp.OnChain.RaffleValidator (RaffleDatum (..), RaffleParams (..), RaffleValidatorParams (RaffleValidatorParams), hasGivenInlineDatum, hasUtxo, isInNewState, isInValue, tokenNameFromTxOutRef)
 import RafflesDApp.OnChain.RaffleValidator qualified as RaffleValidator
 
@@ -163,8 +163,10 @@ samplePolicy :: RaffleStateTokenMinting
 samplePolicy = compileScript sampleRafflePrams
 samplePolicyHash :: MintingPolicyHash
 samplePolicyHash = mintingPolicyHash (unMintingContract samplePolicy)
+sampleRaffleValidatorParams :: RaffleValidatorParams
+sampleRaffleValidatorParams = RaffleValidatorParams samplePolicyHash
 sampleCompileRaffleValidator :: Validator
-sampleCompileRaffleValidator = unValidatorContract (RaffleValidator.compileValidator (RaffleValidatorParams samplePolicyHash))
+sampleCompileRaffleValidator = unValidatorContract (RaffleValidator.compileValidator sampleRaffleValidatorParams)
 sampleRaffleValidatorHash :: ValidatorHash
 sampleRaffleValidatorHash = validatorHash sampleCompileRaffleValidator
 
@@ -176,7 +178,7 @@ sampleRaffleNew =
     , raffleTicketPrice = 100
     , raffleMinNoOfTickets = 5
     , raffleCommitDeadline = POSIXTime 1734961232000
-    , raffleRevealDeadline = POSIXTime 1734964832000
+    , raffleRevealDeadline = POSIXTime 1744964832000
     , raffleTickets = []
     , raffleParams = sampleRafflePrams
     , raffleStateTokenAssetClass = AssetClass (getCurrencySymbol samplePolicy, tokenNameFromTxOutRef sampleTxOutRefSeed)
@@ -229,6 +231,6 @@ test =
     [ initEmulator @NFT.NFTMinting 1 [NFT.Mint "jambtoken" `forWallet` 1] -- mint NFT to wallet 1
     , initEmulator @RaffleStateTokenMinting
         1
-        [ Mint sampleRaffleNew "812fc438d71cb1c1ed0803eb113dc0c1539914d5d435a7600362d7ae" `forWallet` 1 -- Create raffle to validatorHash
+        [ Mint sampleRaffleNew sampleRaffleValidatorHash `forWallet` 1 -- Create raffle to validatorHash
         ]
     ]
