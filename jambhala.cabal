@@ -36,8 +36,6 @@ library
   import:             common
   exposed-modules:
     Contracts
-    Contracts.Raffle
-    Contracts.RaffleStateThreadNFT
     Jambhala.CLI
     Jambhala.Plutus
     Jambhala.Utils
@@ -46,7 +44,6 @@ library
 
   -- Add new contracts here, i.e.:
   -- Contracts.MyContract
-
   other-modules:
     Contracts.Samples.Auction
     Contracts.Samples.CustomTyped
@@ -67,6 +64,9 @@ library
     Jambhala.CLI.Types
     Jambhala.CLI.Update
     Jambhala.CLI.Update.Parsers
+    RafflesDApp.OffChain.Operations
+    RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy
+    RafflesDApp.OnChain.RaffleValidator
 
   -- Sample contracts:
   hs-source-dirs:     src

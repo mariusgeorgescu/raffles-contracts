@@ -9,7 +9,7 @@ module Contracts (contracts, samples) where
 -- Import your contracts here, i.e.:
 -- import  Contracts.MyContract qualified as MyContract
 
-import Contracts.RaffleStateThreadNFT qualified as RaffleStateThreadNFT
+import RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy qualified as RaffleStateThreadNFT
 import Contracts.Samples.Auction qualified as Auction
 import Contracts.Samples.CustomTyped qualified as CustomTyped
 import Contracts.Samples.ForwardMinting qualified as ForwardMinting

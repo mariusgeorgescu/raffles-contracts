@@ -3,16 +3,16 @@
 -- Required for `makeLift`:
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Contracts.RaffleStateThreadNFT where
+module RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy where
 
-import Contracts.Raffle (RaffleDatum (..), RaffleParams (..), RaffleValidatorParams (RaffleValidatorParams), hasGivenInlineDatum, hasUtxo, isInNewState, isInValue, tokenNameFromTxOutRef)
-import Contracts.Raffle qualified as Raffle
 import Contracts.Samples.NFT qualified as NFT
 import Jambhala.Plutus
 import Jambhala.Utils
 import Ledger.Tx.Constraints.TxConstraints (mustPayToOtherScriptWithInlineDatum)
 import Plutus.V1.Ledger.Value (geq)
 import Plutus.V2.Ledger.Api (POSIXTime (POSIXTime, getPOSIXTime))
+import RafflesDApp.OnChain.RaffleValidator (RaffleDatum (..), RaffleParams (..), RaffleValidatorParams (RaffleValidatorParams), hasGivenInlineDatum, hasUtxo, isInNewState, isInValue, tokenNameFromTxOutRef)
+import RafflesDApp.OnChain.RaffleValidator qualified as RaffleValidator
 
 -- | Custom redeemer type to indicate minting mode.
 data Mode
@@ -68,30 +68,24 @@ nftLambda params mode context@(ScriptContext txInfo@TxInfo {..} _) =
 
 {- | This is a function to check that a RaffleDatum is valid for creating a new raffle.
 For the datum to be valid, the following conditions must be met:
-     * The ticket price of the raffle must be a positive number.
-     * The minimum number of tickets must be a positive number.
-     * The revealing deadline must be with at least revealing window after the committing deadline.
      * The state token currency symbol must be of the current minting policy. and the state token name must be derived from the seed 'TxOutRef'.
      * The seed 'TxOutRef' must be spent.
      * The raffle must be in a valid new state:
-        * The commiting deadline should not have been passed.
+        * The ticket price of the raffle must be a positive number.
+        * The minimum number of tickets must be a positive number higher than 0.
         * No tickets should have been bought yet for the current raffle.
+        * The revealing deadline must be with at least revealing window after the committing deadline.
+        * The commiting deadline should not have been passed.
 -}
 checkCreateNewRaffle :: ScriptContext -> TxOutRef -> RaffleDatum -> Bool
 checkCreateNewRaffle context seedTxOutRef raffle@RaffleDatum {..} =
   pand
-    [ "ticket price is negative"
-        `traceIfFalse` (raffleTicketPrice #> 0)
-    , "min. no. of tickets is negative"
-        `traceIfFalse` (raffleMinNoOfTickets #> 0)
-    , "min. reveal window not met"
-        `traceIfFalse` (getPOSIXTime (raffleRevealDeadline #- raffleCommitDeadline) #> minRevealingWindow raffleParams)
-    , "invalid state token"
+    [ "invalid state token"
         `traceIfFalse` (AssetClass (ownCurrencySymbol context, tokenNameFromTxOutRef seedTxOutRef) #== raffleStateTokenAssetClass)
     , "seed UTXO not spent"
         `traceIfFalse` hasUtxo seedTxOutRef ((txInfoInputs . scriptContextTxInfo) context)
     , "raffle not in new state"
-        `traceIfFalse` isInNewState raffle (scriptContextTxInfo context)
+        `traceIfFalse` isInNewState raffle (txInfoValidRange . scriptContextTxInfo $ context)
     ]
 {-# INLINEABLE checkCreateNewRaffle #-}
 
@@ -169,8 +163,10 @@ samplePolicy :: RaffleStateTokenMinting
 samplePolicy = compileScript sampleRafflePrams
 samplePolicyHash :: MintingPolicyHash
 samplePolicyHash = mintingPolicyHash (unMintingContract samplePolicy)
+sampleCompileRaffleValidator :: Validator
+sampleCompileRaffleValidator = unValidatorContract (RaffleValidator.compileValidator (RaffleValidatorParams samplePolicyHash))
 sampleRaffleValidatorHash :: ValidatorHash
-sampleRaffleValidatorHash = validatorHash (unValidatorContract (Raffle.compileValidator (RaffleValidatorParams samplePolicyHash)))
+sampleRaffleValidatorHash = validatorHash sampleCompileRaffleValidator
 
 sampleRaffleNew :: RaffleDatum
 sampleRaffleNew =

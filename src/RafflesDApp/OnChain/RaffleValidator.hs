@@ -1,6 +1,6 @@
 {-# OPTIONS_HADDOCK show-extensions #-}
 
-module Contracts.Raffle where
+module RafflesDApp.OnChain.RaffleValidator where
 
 import Jambhala.Plutus hiding (Address)
 import Jambhala.Utils
@@ -103,6 +103,7 @@ makeIsDataIndexed
 raffleLamba :: RaffleValidatorParams -> RaffleDatum -> RaffleRedeemer -> ScriptContext -> Bool
 raffleLamba params raffle@RaffleDatum {..} redeemer context =
   let txInfo = scriptContextTxInfo context
+      txValidRange = txInfoValidRange txInfo
       txSpendsStateToken =
         spendsToken raffleStateTokenAssetClass context
       stateTokenIsValid =
@@ -112,52 +113,52 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
         then case redeemer of
           Buy _pkh commits ->
             pand
-              [ isInNewState raffle txInfo || isInCommitState raffle txInfo
+              [ isInNewState raffle txValidRange || isInCommitState raffle txValidRange
               , raffleHasAvailableTickets raffle (plength commits)
               , ctxHasContinuingOutputWithCorrectValueAndDatum context raffle redeemer
               ]
           Reveal revealed_tickets ->
             pand
-              [ isInRevealingState raffle txInfo
+              [ isInRevealingState raffle txValidRange
               , ctxHasContinuingOutputWithCorrectValueAndDatum context raffle redeemer
               , txIsSignedByTicketOwners context revealed_tickets
               ]
           Redeem ->
             pand
-              [ isWinnerSelectedByCRS raffle txInfo
+              [ isWinnerSelectedByCRS raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingAccumulatedValueToOrganizer txInfo raffle
               , txIsPayingPrizeToPKH txInfo raffle (determineRaffleWinner raffle)
               ]
           Cancel ->
             pand
-              [ isInNewState raffle txInfo
+              [ isInNewState raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingPrizeToOrganizer txInfo raffle
               ]
           CloseExpired ->
             pand
-              [ isInExpiredState raffle txInfo
+              [ isInExpiredState raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingPrizeToOrganizer txInfo raffle
               ]
           CloseUnderfunded ->
             pand
-              [ isInUnderfundedState raffle txInfo
+              [ isInUnderfundedState raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingPrizeToOrganizer txInfo raffle
               , txIsRefundingAllTickets txInfo raffle
               ]
           CloseExposedUnderfunded pkh ->
             pand
-              [ isInUnderfundedExposedState raffle txInfo
+              [ isInUnderfundedExposedState raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingPrizeToPKH txInfo raffle pkh
               , txIsRefundingAllTickets txInfo raffle
               ]
           CloseUnrevealed ->
             pand
-              [ isInUnrevealedState raffle txInfo
+              [ isInUnrevealedState raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingPrizeToOrganizer txInfo raffle
               , txIsRefundingRevealedTickets txInfo raffle
@@ -165,7 +166,7 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
               ]
           CloseExposedUnrevealed pkh ->
             pand
-              [ isInUnrevealedExposedState raffle txInfo
+              [ isInUnrevealedExposedState raffle txValidRange
               , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
               , txIsPayingPrizeToPKH txInfo raffle pkh
               , txIsRefundingRevealedTickets txInfo raffle
@@ -389,29 +390,38 @@ raffleHasAvailableTickets RaffleDatum {raffleParams, raffleTickets} noOfNewTicke
 
 ------------------------
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @New State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @New State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
-     * The commiting deadline have not passed.
-     * The tickets list must be empty.
+      * The commiting deadline should not have been passed.
+      * The tickets list must be empty.
+      * The ticket price of the raffle must be a positive number.
+      * The minimum number of tickets must be a positive number higher than 0.
+      * The revealing deadline must be with at least revealing window after the committing deadline.
 -}
-isInNewState :: RaffleDatum -> TxInfo -> Bool
-isInNewState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
+isInNewState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInNewState RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid new state"
     `traceIfFalse` pand
       [ "tx valid range is not before commit deadline"
           `traceIfFalse` (raffleCommitDeadline `after` txInfoValidRange)
       , "raffleTickets is not empty"
           `traceIfFalse` pnull raffleTickets
+      , "ticket price is negative"
+          `traceIfFalse` (raffleTicketPrice #> 0)
+      , "invalid min. no. of tickets "
+          `traceIfFalse` (raffleMinNoOfTickets #> 0)
+      , "min. reveal window not met"
+          `traceIfFalse` (getPOSIXTime (raffleRevealDeadline #- raffleCommitDeadline) #> minRevealingWindow raffleParams)
       ]
 {-# INLINEABLE isInNewState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Expired State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Expired State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The commiting deadline has passed.
      * The tickets list must be empty.
 -}
-isInExpiredState :: RaffleDatum -> TxInfo -> Bool
-isInExpiredState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
+isInExpiredState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInExpiredState RaffleDatum {raffleTickets, raffleCommitDeadline} txInfoValidRange =
   "The raffle must be in a valid expired state"
     `traceIfFalse` pand
       [ "tx valid range is not after commit deadline"
@@ -421,13 +431,13 @@ isInExpiredState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInf
       ]
 {-# INLINEABLE isInExpiredState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Committing State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Committing State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The commiting deadline have not passed.
      * At least one ticket have been bought for the current raffle.
 -}
-isInCommitState :: RaffleDatum -> TxInfo -> Bool
-isInCommitState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfoValidRange} =
+isInCommitState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInCommitState RaffleDatum {raffleTickets, raffleCommitDeadline} txInfoValidRange =
   pand
     [ "tx valid range is not before commit deadline"
         `traceIfFalse` (raffleCommitDeadline `after` txInfoValidRange)
@@ -435,15 +445,15 @@ isInCommitState RaffleDatum {raffleTickets, raffleCommitDeadline} TxInfo {txInfo
     ]
 {-# INLINEABLE isInCommitState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The commiting deadline has passed.
      * Tickets have been bought.
      * The minimum amount was not reached.
      * The closing deadline (closing window after committing deadline) has not passed.
 -}
-isInUnderfundedState :: RaffleDatum -> TxInfo -> Bool
-isInUnderfundedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
+isInUnderfundedState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInUnderfundedState raffle@RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid underfunded state"
     `traceIfFalse` pand
       [ "tx valid range must be between commit deadline and commit deadline + closing widnow"
@@ -455,15 +465,15 @@ isInUnderfundedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
       ]
 {-# INLINEABLE isInUnderfundedState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded Exposed State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in an @Underfunded Exposed State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The commiting deadline has passed.
      * Tickets have been bought.
      * The minimum amount was not reached.
      * The closing deadline (closing window after committing deadline) has passed.
 -}
-isInUnderfundedExposedState :: RaffleDatum -> TxInfo -> Bool
-isInUnderfundedExposedState RaffleDatum {..} TxInfo {txInfoValidRange} =
+isInUnderfundedExposedState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInUnderfundedExposedState RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid underfunded exposed state"
     `traceIfFalse` pand
       [ "tx valid range must be after commit deadline + closing widnow"
@@ -475,15 +485,15 @@ isInUnderfundedExposedState RaffleDatum {..} TxInfo {txInfoValidRange} =
       ]
 {-# INLINEABLE isInUnderfundedExposedState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Revealing State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Revealing State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The commiting deadline has passed.
      * The minimum number of tickets to be sold was reached. (which implies that tickets have been bought)
      * Not all tickets were revealed yet.
      * The revealing deadline have not been passed.
 -}
-isInRevealingState :: RaffleDatum -> TxInfo -> Bool
-isInRevealingState datum@RaffleDatum {..} TxInfo {..} =
+isInRevealingState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInRevealingState datum@RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid revealing state"
     `traceIfFalse` pand
       [ "not in revealing interval"
@@ -495,15 +505,15 @@ isInRevealingState datum@RaffleDatum {..} TxInfo {..} =
       ]
 {-# INLINEABLE isInRevealingState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Unrevealed State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Unrevealed State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The revealing deadline has passed.
      * The minimum number of tickets to be sold was reached. (which implies that tickets have been bought)
      * Not all ticket secrets where revealed.
      * The closing deadline (closing window after revealing deadline) have not passed.
 -}
-isInUnrevealedState :: RaffleDatum -> TxInfo -> Bool
-isInUnrevealedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
+isInUnrevealedState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInUnrevealedState raffle@RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid unrevealed state"
     `traceIfFalse` pand
       [ "tx valid range must be between reveal deadline and reveal deadline + closing widnow"
@@ -515,15 +525,15 @@ isInUnrevealedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
       ]
 {-# INLINEABLE isInUnrevealedState #-}
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Unrevealed State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Unrevealed State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The revealing deadline has passed.
      * The minimum number of tickets to be sold was reached. (which implies that tickets have been bought)
      * Not all ticket secrets where revealed.
      * The closing deadline (closing window after revealing deadline) has passed.
 -}
-isInUnrevealedExposedState :: RaffleDatum -> TxInfo -> Bool
-isInUnrevealedExposedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
+isInUnrevealedExposedState :: RaffleDatum -> POSIXTimeRange -> Bool
+isInUnrevealedExposedState raffle@RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid unrevealed  exposed state"
     `traceIfFalse` pand
       [ "tx valid range must be after reveal deadline + closing widnow"
@@ -534,13 +544,13 @@ isInUnrevealedExposedState raffle@RaffleDatum {..} TxInfo {txInfoValidRange} =
           `traceIfFalse` ((#>= raffleMinNoOfTickets) . plength $ raffleTickets)
       ]
 
-{- | This is a function to check that a RaffleDatum represents a raffle in a @Winner Selected By CRS State@, in a given transaction context.
+{- | This is a function to check that a RaffleDatum represents a raffle in a @Winner Selected By CRS State@, in a given 'POSIXTimeRange'
 The function returns 'True' if the following conditions are met:
      * The commiting deadline should not have been passed.
      * At least one ticket have been bought for the current raffle.
 -}
-isWinnerSelectedByCRS :: RaffleDatum -> TxInfo -> Bool
-isWinnerSelectedByCRS RaffleDatum {..} TxInfo {txInfoValidRange} =
+isWinnerSelectedByCRS :: RaffleDatum -> POSIXTimeRange -> Bool
+isWinnerSelectedByCRS RaffleDatum {..} txInfoValidRange =
   "The raffle must be in a valid Winner Selected by CRS state"
     `traceIfFalse` pand
       [ "tx valid range must be after revealing deadline" `traceIfFalse` (raffleRevealDeadline `before` txInfoValidRange)
@@ -700,3 +710,13 @@ type RaffleValidator = ValidatorContract "raffle"
 -- | Function for producing the compiled spending validator script.
 compileValidator :: RaffleValidatorParams -> RaffleValidator
 compileValidator params = mkValidatorContract ($$(compile [||untypedLambda||]) `applyCode` liftCode params)
+
+------------------------
+
+-- *  Samples
+
+------------------------
+
+sampleRaffleValidatorParams = RaffleValidatorParams ""
+
+sampleCompiledRaffleValidator = compileValidator sampleRaffleValidatorParams
