@@ -58,7 +58,10 @@ data RaffleTicket = RaffleTicket
 unstableMakeIsData ''RaffleTicket
 
 data RaffleDatum = RaffleDatum
-  { raffleStateTokenAssetClass :: AssetClass
+  { -- | linked between mp and validator
+    raffleParams :: RaffleParams
+  , -- | linked between mp and validator
+    raffleStateTokenAssetClass :: AssetClass
   , raffleOrganizer :: PubKeyHash
   , rafflePrizeValue :: Value
   , raffleTicketPrice :: Integer
@@ -66,7 +69,6 @@ data RaffleDatum = RaffleDatum
   , raffleCommitDeadline :: POSIXTime
   , raffleRevealDeadline :: POSIXTime
   , raffleTickets :: [RaffleTicket]
-  , raffleParams :: RaffleParams
   }
   deriving (Generic, FromJSON, ToJSON)
 
