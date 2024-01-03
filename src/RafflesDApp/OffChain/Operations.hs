@@ -31,7 +31,11 @@ gySlotFromPOSIXTime :: GYTxQueryMonad m => Jambhala.Plutus.POSIXTime -> m GYSlot
 gySlotFromPOSIXTime ptime = do
   enclosingSlotFromTime' (timeFromPlutus ptime)
 
--- | Operation to create a raffle.
+------------------------
+
+-- *  Create Raffle Transaction
+
+------------------------
 createRaffle ::
   (HasCallStack, GYTxMonad m, GYTxQueryMonad m) =>
   -- | Raffle minting policy params
