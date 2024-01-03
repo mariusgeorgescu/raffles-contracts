@@ -153,8 +153,8 @@ sampleTxOutRefSeed = unsafeMkTxOutRef "019b759d7d22f8f93125c27229debf4771194f9d9
 sampleRafflePrams :: RaffleParams
 sampleRafflePrams =
   RaffleParams
-    { closingWindow = 1800000 -- Miliseconds
-    , minRevealingWindow = 1800000 -- Miliseconds
+    { closingWindow = 1000 -- Miliseconds
+    , minRevealingWindow = 1000 -- Miliseconds
     , donationPKH = "a2c20c77887ace1cd986193e4e75babd8993cfd56995cd5cfce609c2"
     , maxNoOfTickets = 10
     }
@@ -177,7 +177,7 @@ sampleRaffleNew =
     , rafflePrizeValue = singleton nftCurrencySymbol nftTokenName 1
     , raffleTicketPrice = 100
     , raffleMinNoOfTickets = 5
-    , raffleCommitDeadline = POSIXTime 1734961232000
+    , raffleCommitDeadline = POSIXTime 1734964832000
     , raffleRevealDeadline = POSIXTime 1744964832000
     , raffleTickets = []
     , raffleParams = sampleRafflePrams

@@ -48,9 +48,11 @@ createRaffleTrace Wallets {..} = do
   let tn1 = fromJust $ tokenNameFromPlutus (tokenName "alabala")
   ac <- runWallet w1 $ mintStateTokenRun tn1
   finalBalance <- runWallet w1 $ do
-    void $ createRaffleRun sampleRafflePrams (valueToPlutus (valueSingleton (fromJust ac) 10)) (raffleTicketPrice sampleRaffleNew) (raffleMinNoOfTickets sampleRaffleNew) (raffleCommitDeadline sampleRaffleNew) (raffleRevealDeadline sampleRaffleNew)
+    cddl <- pPOSIXTimeFromSlotInteger 13
+    rddl <- pPOSIXTimeFromSlotInteger 15
+    void $ createRaffleRun sampleRafflePrams (valueToPlutus (valueSingleton (fromJust ac) 10)) (raffleTicketPrice sampleRaffleNew) (raffleMinNoOfTickets sampleRaffleNew) cddl rddl
     balance w1
-  
+
   logInfo (show finalBalance)
   return ()
 

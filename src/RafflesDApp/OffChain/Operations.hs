@@ -24,6 +24,13 @@ data RaffleOperationException = InvalidRaffleDatum | Error String
 instance Exception RaffleOperationException
 instance IsGYApiError RaffleOperationException
 
+pPOSIXTimeFromSlotInteger :: GYTxQueryMonad m => Integer -> m Jambhala.Plutus.POSIXTime
+pPOSIXTimeFromSlotInteger = (timeToPlutus <$>) . slotToBeginTime . slotFromApi . fromInteger
+
+gySlotFromPOSIXTime :: GYTxQueryMonad m => Jambhala.Plutus.POSIXTime -> m GYSlot
+gySlotFromPOSIXTime ptime = do
+  enclosingSlotFromTime' (timeFromPlutus ptime)
+
 -- | Operation to create a raffle.
 createRaffle ::
   (HasCallStack, GYTxMonad m, GYTxQueryMonad m) =>
@@ -65,8 +72,9 @@ createRaffle paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl
           , raffleRevealDeadline = rRevealDddl
           , raffleTickets = []
           }
-  now <- currentSlot 
-  after4Slots <- advanceSlot' now 4
+  now <- currentSlot
+  after36h <- advanceSlot' now 129600
+  commitDdllSlot <- gySlotFromPOSIXTime rCommitDdl
   gyTokenName <- tokenNameFromPlutus' $ tokenNameFromTxOutRef oref
   raffleValidatorAddress <- scriptAddress gyRaffleValidator
   gyPrizeVal <- valueFromPlutus' rPrize
@@ -74,7 +82,7 @@ createRaffle paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl
   return $
     mconcat
       [ isInvalidBefore now
-      , isInvalidAfter after4Slots
+      , isInvalidAfter (minimum [after36h, commitDdllSlot])
       , mustMint gyRaffleMintignPolicy (redeemerFromPlutusData $ RaffleStateThreadNFT.Minting newRaffle pRaffleValidatorHash oref) gyTokenName 1
       , mustHaveOutput
           GYTxOut
