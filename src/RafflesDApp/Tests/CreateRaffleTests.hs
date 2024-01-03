@@ -36,21 +36,23 @@ createRaffleRun paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealD
     skeleton <- createRaffle paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl addr
     sendSkeleton skeleton
 
-mintStateTokenRun :: GYTokenName -> GYTxMonadRun GYAssetClass
-mintStateTokenRun tn = do
-  (ac, skeleton) <- mintTestTokens tn 10
+mintTestsTokenRun :: GYTokenName -> Integer -> GYTxMonadRun GYValue
+mintTestsTokenRun tn i = do
+  (ac, skeleton) <- mintTestTokens tn (fromInteger i)
   void $ sendSkeleton skeleton
-  return ac
+  return $ valueSingleton ac i
 
 createRaffleTrace :: Wallets -> Run ()
 createRaffleTrace Wallets {..} = do
   --First step: Get the required parameter
-  let tn1 = fromJust $ tokenNameFromPlutus (tokenName "alabala")
-  ac <- runWallet w1 $ mintStateTokenRun tn1
+
+  mintedTestTokens <- runWallet w1 $ do
+    testTokens <- tokenNameFromPlutus' (tokenName "AlaBalaPortocala")
+    mintTestsTokenRun testTokens 100
   finalBalance <- runWallet w1 $ do
     cddl <- pPOSIXTimeFromSlotInteger 13
     rddl <- pPOSIXTimeFromSlotInteger 15
-    void $ createRaffleRun sampleRafflePrams (valueToPlutus (valueSingleton (fromJust ac) 10)) (raffleTicketPrice sampleRaffleNew) (raffleMinNoOfTickets sampleRaffleNew) cddl rddl
+    void $ createRaffleRun sampleRafflePrams (valueToPlutus (fromJust mintedTestTokens)) 10_000_000 5 cddl rddl
     balance w1
 
   logInfo (show finalBalance)
