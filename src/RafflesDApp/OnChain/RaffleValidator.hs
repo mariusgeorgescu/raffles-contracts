@@ -7,7 +7,6 @@ import Jambhala.Utils
 import Plutus.V1.Ledger.Interval (after, before)
 import Plutus.V1.Ledger.Value (geq)
 import Plutus.V2.Ledger.Api
-import PlutusTx.Builtins (blake2b_256)
 import PlutusTx.Eq qualified as PlutusTx
 
 -- *  Types

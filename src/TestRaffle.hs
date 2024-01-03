@@ -19,10 +19,11 @@ simpleSpend = do
   pure $
     isOk && (vals == fmap adaValue [900, 1000, 1100])
 
-
+mymock :: Mock
 mymock = initMock defaultAlonzo (adaValue 100000)
-
-a = runMock  simpleSpend mymock
+a :: (Bool, Mock)
+a = runMock simpleSpend mymock
 
 -- >>> fst a
+-- True
 -- True

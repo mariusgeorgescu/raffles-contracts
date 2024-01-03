@@ -1,13 +1,14 @@
 module RafflesDApp.Tests.CreateRaffleTests where
 
 import GeniusYield.Api.TestTokens (mintTestTokens)
-import GeniusYield.Imports
+
 import GeniusYield.Test.Utils
 import GeniusYield.TxBuilder
 import GeniusYield.Types
 import Jambhala.Plutus (tokenName)
 import Jambhala.Plutus qualified
-import Plutus.Model
+
+import Plutus.Model (logInfo)
 import RafflesDApp.OffChain.Operations
 import RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy
 import RafflesDApp.OnChain.RaffleValidator
@@ -18,38 +19,40 @@ createRaffleTests :: TestTree
 createRaffleTests =
   testGroup
     "Create raffle"
-    [ testRun "Balance checks creating first raffle" createRaffleTrace
+    [ testRun "Create a raffle" createRaffleTrace
     ]
 
 createRaffleRun ::
   RaffleParams ->
-  RaffleValidatorParams ->
-  RaffleDatum ->
-  Jambhala.Plutus.ValidatorHash ->
+  Jambhala.Plutus.Value ->
+  Integer ->
+  Integer ->
+  Jambhala.Plutus.POSIXTime ->
+  Jambhala.Plutus.POSIXTime ->
   GYTxMonadRun GYTxId
-createRaffleRun mpParams valParams raffle valHash =
+createRaffleRun paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl =
   do
     addr <- ownAddress
-    skeleton <- createRaffle addr mpParams valParams raffle valHash
+    skeleton <- createRaffle paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl addr
     sendSkeleton skeleton
 
 mintStateTokenRun :: GYTokenName -> GYTxMonadRun GYAssetClass
 mintStateTokenRun tn = do
-  (ac, skeleton) <- mintTestTokens tn 1
-  sendSkeleton skeleton
+  (ac, skeleton) <- mintTestTokens tn 10
+  void $ sendSkeleton skeleton
   return ac
 
 createRaffleTrace :: Wallets -> Run ()
-createRaffleTrace ws@Wallets {..} = do
+createRaffleTrace Wallets {..} = do
   --First step: Get the required parameter
   let tn1 = fromJust $ tokenNameFromPlutus (tokenName "alabala")
   ac <- runWallet w1 $ mintStateTokenRun tn1
-  void $
-    -- following operations are ran by first wallet, `w1`
-    runWallet w1 $
-      do
-        createRaffleRun sampleRafflePrams sampleRaffleValidatorParams (sampleRaffleNew {rafflePrizeValue = valueToPlutus (valueSingleton (fromJust ac) 1)}) sampleRaffleValidatorHash
+  finalBalance <- runWallet w1 $ do
+    void $ createRaffleRun sampleRafflePrams (valueToPlutus (valueSingleton (fromJust ac) 10)) (raffleTicketPrice sampleRaffleNew) (raffleMinNoOfTickets sampleRaffleNew) (raffleCommitDeadline sampleRaffleNew) (raffleRevealDeadline sampleRaffleNew)
+    balance w1
+  
+  logInfo (show finalBalance)
+  return ()
 
+runTest :: IO ()
 runTest = defaultMain $ testGroup "CreateRaffles" [createRaffleTests]
-
--- -- >>> run
