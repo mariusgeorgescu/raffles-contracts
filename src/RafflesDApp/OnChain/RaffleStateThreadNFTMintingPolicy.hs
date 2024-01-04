@@ -37,7 +37,7 @@ makeIsDataIndexed ''Mode [('Minting, 0), ('Burning, 1)]
 For minting, the following conditions must be met:
     * The raffle parameters of the minting policy  must be equal with the ones in the datum of the output locked at raffle validator's address.
     * The raffle datum must be a valid datum to create a new raffle.
-    * The transaction must mint exactly 1 state token (with token name equal to the seed 'TxOutRef').
+    * The transaction must mint exactly 1 state thread token (with token name equal to the seed 'TxOutRef').
     * The transaction must have an output with value containing the raffle's prize value + raffle state thread NFT and a valid datum, locked at the raffle validator's address.
     * The transaction must be signed by the raffle's organizer.
 For buring, the transaction must burn exactly 1 token with raffle state token AssetClass.

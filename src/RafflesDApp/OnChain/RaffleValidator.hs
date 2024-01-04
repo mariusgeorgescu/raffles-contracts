@@ -150,13 +150,6 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
               , txIsPayingPrizeToOrganizer txInfo raffle
               , txIsRefundingAllTickets txInfo raffle
               ]
-          CloseExposedUnderfunded pkh ->
-            pand
-              [ isInUnderfundedExposedState raffle txValidRange
-              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
-              , txIsPayingPrizeToPKH txInfo raffle pkh
-              , txIsRefundingAllTickets txInfo raffle
-              ]
           CloseUnrevealed ->
             pand
               [ isInUnrevealedState raffle txValidRange
@@ -164,6 +157,13 @@ raffleLamba params raffle@RaffleDatum {..} redeemer context =
               , txIsPayingPrizeToOrganizer txInfo raffle
               , txIsRefundingRevealedTickets txInfo raffle
               , txIsPayingUnrevealedValueToPKH txInfo raffle raffleOrganizer
+              ]
+          CloseExposedUnderfunded pkh ->
+            pand
+              [ isInUnderfundedExposedState raffle txValidRange
+              , ctxIsBurningStateTokenAndPayingAnyExtraToDonation context raffle
+              , txIsPayingPrizeToPKH txInfo raffle pkh
+              , txIsRefundingAllTickets txInfo raffle
               ]
           CloseExposedUnrevealed pkh ->
             pand
