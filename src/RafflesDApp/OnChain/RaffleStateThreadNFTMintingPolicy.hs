@@ -35,11 +35,11 @@ makeIsDataIndexed ''Mode [('Minting, 0), ('Burning, 1)]
 
 {- | Typed parameterized minting policy lambda for minting and burning Raffle State Thread NFTs.
 For minting, the following conditions must be met:
-     * The raffle parameters of the minting policy must be equal with the ones in raffle datum.
-     * The raffle datum must be a valid datum to create a new raffle.
-     * The transaction must mint exactly 1 state token (with token name equal to the seed 'TxOutRef').
-     * The transaction must have an output (with the raffle state token, rafflePrizeValue and datum) locked at the raffle validator's address.
-     * The transaction must be signed by the raffle's organizer.
+    * The raffle parameters of the minting policy  must be equal with the ones in the datum of the output locked at raffle validator's address.
+    * The raffle datum must be a valid datum to create a new raffle.
+    * The transaction must mint exactly 1 state token (with token name equal to the seed 'TxOutRef').
+    * The transaction must have an output with value containing the raffle's prize value + raffle state thread NFT and a valid datum, locked at the raffle validator's address.
+    * The transaction must be signed by the raffle's organizer.
 For buring, the transaction must burn exactly 1 token with raffle state token AssetClass.
 -}
 nftLambda :: RaffleParams -> Mode -> ScriptContext -> Bool
@@ -49,7 +49,7 @@ nftLambda params mode context@(ScriptContext txInfo@TxInfo {..} _) =
       let stateTokenName = tokenNameFromTxOutRef txOutRef
           txOutsToVH = filter ((#== scriptHashAddress vh) . txOutAddress) txInfoOutputs
        in pand
-            [ "The raffle parameters of the minting policy must be equal with the ones in raffle datum."
+            [ "The raffle parameters of the minting policy  must be equal with the ones in the datum of the output locked at raffle validator's address."
                 `traceIfFalse` (params #== raffleParams raffle)
             , "The raffle datum must be a valid datum to create a new raffle."
                 `traceIfFalse` checkCreateNewRaffle context txOutRef raffle
@@ -71,7 +71,7 @@ For the datum to be valid, the following conditions must be met:
      * The state token currency symbol must be of the current minting policy. and the state token name must be derived from the seed 'TxOutRef'.
      * The seed 'TxOutRef' must be spent.
      * The raffle must be in a valid new state:
-        * The ticket price of the raffle must be a positive number.
+        * The ticket price of the raffle must be a positive number higher than 0..
         * The minimum number of tickets must be a positive number higher than 0.
         * No tickets should have been bought yet for the current raffle.
         * The revealing deadline must be with at least revealing window after the committing deadline.
