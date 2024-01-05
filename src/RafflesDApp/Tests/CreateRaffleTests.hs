@@ -8,6 +8,7 @@ import GeniusYield.Types
 import Jambhala.Plutus (tokenName)
 import Jambhala.Plutus qualified
 
+import Data.List.Extra (replicate)
 import Jambhala.Plutus qualified as JP
 import Plutus.Model (logInfo, waitNSlots)
 import RafflesDApp.OffChain.Operations
@@ -19,8 +20,8 @@ import Test.Tasty (TestTree, defaultMain, testGroup)
 createRaffleTests :: TestTree
 createRaffleTests =
   testGroup
-    "Create raffle"
-    [ testRun "Create a raffle" createRaffleTrace
+    "Raffle Scenarios"
+    [ testRun "Create a raffle and cancel it " $ createRaffleAndCancelTrace sampleRafflePrams
     ]
 
 createRaffleRun ::
@@ -54,29 +55,65 @@ mintTestsTokenRun tn i = do
   void $ sendSkeleton skeleton
   return $ valueSingleton ac i
 
-createRaffleTrace :: Wallets -> Run ()
-createRaffleTrace Wallets {..} = do
-  --First step: Get the required parameter
+----------------------
+-- ACTIONS
+-----------------------
 
-  refRaffleValidator <- runWallet w1 $ do
-    let gyRaffleValidator = getGYRaffleValidator sampleRafflePrams
-    ref <- addRefScript (walletAddress w9) gyRaffleValidator
-    case ref of
-      Nothing -> error "failed to add reff script"
-      Just gtor -> return gtor
-  mintedTestTokens <- runWallet w1 $ do
+deployRaffleValidatorTrace :: RaffleParams -> Wallet -> GYAddress -> Run GYTxOutRef
+deployRaffleValidatorTrace params from to = do
+  let gyRaffleValidator = getGYRaffleValidator params
+  valRef <- runWallet' from $ addRefScript to gyRaffleValidator
+  logInfo' "VALIDATOR DEPLOYED"
+  case valRef of
+    Nothing -> error "failed to add the reference script"
+    Just gtor -> return gtor
+
+createRaffleTrace :: RaffleParams -> Wallet -> GYValue -> Integer -> Integer -> Integer -> Integer -> Run JP.AssetClass
+createRaffleTrace params from prize ticketPrice minTickets commitSlot revealSlot = do
+  raffleId <- runWallet' from $ do
+    cddl <- pPOSIXTimeFromSlotInteger commitSlot
+    rddl <- pPOSIXTimeFromSlotInteger revealSlot
+    createRaffleRun params (valueToPlutus prize) ticketPrice minTickets cddl rddl
+
+  logInfo' ("CREATED :" ++ show raffleId)
+  return raffleId
+
+----------------------
+-- SCENARIOS
+-----------------------
+
+createRaffleAndCancelTrace :: RaffleParams -> Wallets -> Run ()
+createRaffleAndCancelTrace params Wallets {..} = do
+  --Deploy the validator to be used as reference script
+  refRaffleValidator <- deployRaffleValidatorTrace params w1 (walletAddress w9)
+
+  --Mint some test tokens to be used as Raffle Prize
+  mintedTestTokens <- runWallet' w1 $ do
     testTokens <- tokenNameFromPlutus' (tokenName "AlaBalaPortocala")
     mintTestsTokenRun testTokens 100
-  raffleId <- runWallet w1 $ do
-    cddl <- pPOSIXTimeFromSlotInteger 20
-    rddl <- pPOSIXTimeFromSlotInteger 30
-    createRaffleRun sampleRafflePrams (valueToPlutus (fromJust mintedTestTokens)) 10_000_000 5 cddl rddl
-  logInfo ("======CREATED" ++ show raffleId)
+  logInfo' "TEST TOKENS MINTED"
+
+  --Create the raffle
+  raffleId <- createRaffleTrace params w1 mintedTestTokens 1 5 16 30
   waitNSlots 3
-  _txID <- runWallet w1 $ do
-    cancelRaffleRun (fromJust refRaffleValidator) sampleRafflePrams (fromJust raffleId)
-  logInfo "canceled"
+  -- Slot 16 - Right before commit deadline ;)
+
+  --Cancel the raffle
+  _ <- runWallet' w1 $ do
+    cancelRaffleRun refRaffleValidator params raffleId
   return ()
+
+logInfo' :: String -> Run ()
+logInfo' s =
+  logInfo
+    ( "\n"
+        ++ replicate 100 '='
+        ++ "\n"
+        ++ s
+        ++ "\n"
+        ++ replicate 100 '='
+        ++ "\n"
+    )
 
 runTest :: IO ()
 runTest = defaultMain $ testGroup "CreateRaffles" [createRaffleTests]
