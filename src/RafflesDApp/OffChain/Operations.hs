@@ -19,6 +19,24 @@ compileRaffleValidatorPlutus = Jambhala.Utils.unValidatorContract . compileValid
 compileRafflesStateTokenMintingPolicyPlutus :: RaffleParams -> JP.MintingPolicy
 compileRafflesStateTokenMintingPolicyPlutus = Jambhala.Utils.unMintingContract . RaffleStateThreadNFT.compileScript
 
+getPlutusRaffleMintingPolicy :: RaffleParams -> JP.MintingPolicy
+getPlutusRaffleMintingPolicy = compileRafflesStateTokenMintingPolicyPlutus
+
+getPlutusRaffleMintingPolicyHash :: RaffleParams -> JP.MintingPolicyHash
+getPlutusRaffleMintingPolicyHash = JP.mintingPolicyHash . getPlutusRaffleMintingPolicy
+
+getGYRaffleMintingPolicy :: RaffleParams -> GYMintingPolicy 'PlutusV2
+getGYRaffleMintingPolicy = mintingPolicyFromPlutus @ 'PlutusV2 . getPlutusRaffleMintingPolicy
+
+getPlutusRaffleValidator :: RaffleParams -> JP.Validator
+getPlutusRaffleValidator = compileRaffleValidatorPlutus . RaffleValidatorParams . getPlutusRaffleMintingPolicyHash
+
+getPlutusRaffleValidatorHash :: RaffleParams -> JP.ValidatorHash
+getPlutusRaffleValidatorHash = JP.validatorHash . getPlutusRaffleValidator
+
+getGYRaffleValidator :: RaffleParams -> GYValidator 'PlutusV2
+getGYRaffleValidator = validatorFromPlutus @ 'PlutusV2 . getPlutusRaffleValidator
+
 data RaffleOperationException = InvalidRaffleDatum | Error String
   deriving (Show)
 
@@ -55,12 +73,10 @@ createRaffle ::
   GYAddress ->
   m (GYTxSkeleton 'PlutusV2, JP.AssetClass)
 createRaffle paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl ownAddr = do
-  let pRaffleMintingPolicy = compileRafflesStateTokenMintingPolicyPlutus paramsMP
-  let pRaffleMintingPolicyHash = JP.mintingPolicyHash pRaffleMintingPolicy
-  let gyRaffleMintignPolicy = mintingPolicyFromPlutus @ 'PlutusV2 pRaffleMintingPolicy
-  let pRaffleValidator = compileRaffleValidatorPlutus (RaffleValidatorParams pRaffleMintingPolicyHash)
-  let pRaffleValidatorHash = JP.validatorHash pRaffleValidator
-  let gyRaffleValidator = validatorFromPlutus @ 'PlutusV2 pRaffleValidator
+  let pRaffleMintingPolicy = getPlutusRaffleMintingPolicy paramsMP
+  let pRaffleValidatorHash = getPlutusRaffleValidatorHash paramsMP
+  let gyRaffleMintignPolicy = getGYRaffleMintingPolicy paramsMP
+  let gyRaffleValidator = getGYRaffleValidator paramsMP
   gyOrganizerPKH <- addressToPubKeyHash' ownAddr
   let pOrganizerPKH = pubKeyHashToPlutus gyOrganizerPKH
   oref <- txOutRefToPlutus <$> someUTxO
@@ -177,4 +193,3 @@ getRaffleInlineDatum utxo = case utxoOutDatum utxo of
 
 utxoHasRaffleStateToken :: JP.AssetClass -> GYUTxO -> Bool
 utxoHasRaffleStateToken (JP.AssetClass (cs, tn)) GYUTxO {..} = isInValue (cs, tn, 1) $ valueToPlutus utxoValue
-

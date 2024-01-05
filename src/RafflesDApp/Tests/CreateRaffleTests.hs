@@ -15,22 +15,6 @@ import RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy
 import RafflesDApp.OnChain.RaffleValidator
 import Test.Tasty (TestTree, defaultMain, testGroup)
 
--- dddRefScript ::
---   Wallets ->
---   Run (GYTxOutRef) -- Our continuation
--- dddRefScript Wallets {..} = do
---   mORef <- addRefScript (walletAddress w9) gyRaffleValidator
---   case mORef of
---     Nothing -> fail "Couldn't find index of the Reference Script in outputs"
---     Just refScript -> return refScript
-
-pRaffleMintingPolicy = compileRafflesStateTokenMintingPolicyPlutus sampleRafflePrams
-pRaffleMintingPolicyHash = JP.mintingPolicyHash pRaffleMintingPolicy
-gyRaffleMintignPolicy = mintingPolicyFromPlutus @ 'PlutusV2 pRaffleMintingPolicy
-pRaffleValidator = compileRaffleValidatorPlutus (RaffleValidatorParams pRaffleMintingPolicyHash)
-pRaffleValidatorHash = JP.validatorHash pRaffleValidator
-gyRaffleValidator = validatorFromPlutus @ 'PlutusV2 pRaffleValidator
-
 -- | Our unit tests for creating a raffle
 createRaffleTests :: TestTree
 createRaffleTests =
@@ -75,6 +59,7 @@ createRaffleTrace Wallets {..} = do
   --First step: Get the required parameter
 
   refRaffleValidator <- runWallet w1 $ do
+    let gyRaffleValidator = getGYRaffleValidator sampleRafflePrams
     ref <- addRefScript (walletAddress w9) gyRaffleValidator
     case ref of
       Nothing -> error "failed to add reff script"
@@ -88,7 +73,7 @@ createRaffleTrace Wallets {..} = do
     createRaffleRun sampleRafflePrams (valueToPlutus (fromJust mintedTestTokens)) 10_000_000 5 cddl rddl
   logInfo ("======CREATED" ++ show raffleId)
   waitNSlots 3
-  txID <- runWallet w1 $ do
+  _txID <- runWallet w1 $ do
     cancelRaffleRun (fromJust refRaffleValidator) sampleRafflePrams (fromJust raffleId)
   logInfo "canceled"
   return ()
