@@ -15,6 +15,22 @@ import RafflesDApp.OnChain.RaffleStateThreadNFTMintingPolicy
 import RafflesDApp.OnChain.RaffleValidator
 import Test.Tasty (TestTree, defaultMain, testGroup)
 
+-- dddRefScript ::
+--   Wallets ->
+--   Run (GYTxOutRef) -- Our continuation
+-- dddRefScript Wallets {..} = do
+--   mORef <- addRefScript (walletAddress w9) gyRaffleValidator
+--   case mORef of
+--     Nothing -> fail "Couldn't find index of the Reference Script in outputs"
+--     Just refScript -> return refScript
+
+pRaffleMintingPolicy = compileRafflesStateTokenMintingPolicyPlutus sampleRafflePrams
+pRaffleMintingPolicyHash = JP.mintingPolicyHash pRaffleMintingPolicy
+gyRaffleMintignPolicy = mintingPolicyFromPlutus @ 'PlutusV2 pRaffleMintingPolicy
+pRaffleValidator = compileRaffleValidatorPlutus (RaffleValidatorParams pRaffleMintingPolicyHash)
+pRaffleValidatorHash = JP.validatorHash pRaffleValidator
+gyRaffleValidator = validatorFromPlutus @ 'PlutusV2 pRaffleValidator
+
 -- | Our unit tests for creating a raffle
 createRaffleTests :: TestTree
 createRaffleTests =
@@ -39,12 +55,13 @@ createRaffleRun paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealD
     return raflleId
 
 cancelRaffleRun ::
+  GYTxOutRef ->
   -- | Raffle minting policy params
   RaffleParams ->
   JP.AssetClass ->
   GYTxMonadRun GYTxId
-cancelRaffleRun paramsMP raffleID = do
-  skeleton <- cancelRaffle paramsMP raffleID
+cancelRaffleRun refScript paramsMP raffleID = do
+  skeleton <- cancelRaffle refScript paramsMP raffleID
   sendSkeleton skeleton
 
 mintTestsTokenRun :: GYTokenName -> Integer -> GYTxMonadRun GYValue
@@ -57,6 +74,11 @@ createRaffleTrace :: Wallets -> Run ()
 createRaffleTrace Wallets {..} = do
   --First step: Get the required parameter
 
+  refRaffleValidator <- runWallet w1 $ do
+    ref <- addRefScript (walletAddress w9) gyRaffleValidator
+    case ref of
+      Nothing -> error "failed to add reff script"
+      Just gtor -> return gtor
   mintedTestTokens <- runWallet w1 $ do
     testTokens <- tokenNameFromPlutus' (tokenName "AlaBalaPortocala")
     mintTestsTokenRun testTokens 100
@@ -66,7 +88,8 @@ createRaffleTrace Wallets {..} = do
     createRaffleRun sampleRafflePrams (valueToPlutus (fromJust mintedTestTokens)) 10_000_000 5 cddl rddl
   logInfo ("======CREATED" ++ show raffleId)
   waitNSlots 3
-  txID <- runWallet w1 $ do cancelRaffleRun sampleRafflePrams (fromJust raffleId)
+  txID <- runWallet w1 $ do
+    cancelRaffleRun (fromJust refRaffleValidator) sampleRafflePrams (fromJust raffleId)
   logInfo "canceled"
   return ()
 

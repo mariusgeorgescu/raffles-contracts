@@ -109,11 +109,13 @@ createRaffle paramsMP rPrize rTicketPrice rMinNoOfTickets rCommitDdl rRevealDddl
 
 cancelRaffle ::
   (HasCallStack, GYTxMonad m, GYTxQueryMonad m) =>
+  --  | Reference Script.
+  GYTxOutRef ->
   -- | Raffle minting policy params
   RaffleParams ->
   JP.AssetClass ->
   m (GYTxSkeleton 'PlutusV2)
-cancelRaffle paramsMP raffleID = do
+cancelRaffle refScript paramsMP raffleID = do
   let pRaffleMintingPolicy = compileRafflesStateTokenMintingPolicyPlutus paramsMP
   let pRaffleMintingPolicyHash = JP.mintingPolicyHash pRaffleMintingPolicy
   let gyRaffleMintignPolicy = mintingPolicyFromPlutus @ 'PlutusV2 pRaffleMintingPolicy
@@ -163,7 +165,7 @@ cancelRaffle paramsMP raffleID = do
       , mustHaveInput
           GYTxIn
             { gyTxInTxOutRef = utxoRef raffleUtxo
-            , gyTxInWitness = GYTxInWitnessScript (GYInScript gyRaffleValidator) gyraffleDatum (redeemerFromPlutusData Cancel)
+            , gyTxInWitness = GYTxInWitnessScript (GYInReference refScript $ validatorToScript gyRaffleValidator) gyraffleDatum (redeemerFromPlutusData Cancel)
             }
       , mustBeSignedBy gyOrganizerPKH
       ]
@@ -175,3 +177,4 @@ getRaffleInlineDatum utxo = case utxoOutDatum utxo of
 
 utxoHasRaffleStateToken :: JP.AssetClass -> GYUTxO -> Bool
 utxoHasRaffleStateToken (JP.AssetClass (cs, tn)) GYUTxO {..} = isInValue (cs, tn, 1) $ valueToPlutus utxoValue
+
