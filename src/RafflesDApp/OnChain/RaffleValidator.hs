@@ -638,13 +638,17 @@ txIsPayingUnrevealedValueToPKH txInfo datum pkh =
 ------------------------
 
 ctxGetExtraAmount :: ScriptContext -> RaffleDatum -> Value
-ctxGetExtraAmount context raffle@RaffleDatum {..} =
+ctxGetExtraAmount context raffle =
   getOwnInputValue context
-    #- ( getRaffleAccumulatedValue raffle
-          #+ rafflePrizeValue
-          #+ assetClassValue raffleStateTokenAssetClass 1
-       )
+    #- getRaffleMandatoryTotalValue raffle
 {-# INLINEABLE ctxGetExtraAmount #-}
+
+getRaffleMandatoryTotalValue :: RaffleDatum -> Value
+getRaffleMandatoryTotalValue raffle@RaffleDatum {..} =
+  getRaffleAccumulatedValue raffle
+    #+ rafflePrizeValue
+    #+ assetClassValue raffleStateTokenAssetClass 1
+{-# INLINEABLE getRaffleMandatoryTotalValue #-}
 
 ctxIsPayingDonation :: ScriptContext -> RaffleDatum -> Bool
 ctxIsPayingDonation context@ScriptContext {scriptContextTxInfo} raffle@RaffleDatum {..} = txIsPayingValueTo scriptContextTxInfo (ctxGetExtraAmount context raffle) (donationPKH raffleParams)

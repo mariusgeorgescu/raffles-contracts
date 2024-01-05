@@ -127,7 +127,7 @@ cancelRaffle paramsMP raffleID = do
   let gyraffleDatum = getRaffleInlineDatum raffleUtxo
   let raffleDatum = unsafeFromBuiltinData $ datumToPlutus' gyraffleDatum
   let raffleUtxoValue = valueToPlutus $ utxoValue raffleUtxo
-  donationValue <- valueFromPlutus' $ raffleUtxoValue #- rafflePrizeValue raffleDatum
+  donationValue <- valueFromPlutus' $ raffleUtxoValue #- getRaffleMandatoryTotalValue raffleDatum
   gydonationPKH <- pubKeyHashFromPlutus' (donationPKH . raffleParams $ raffleDatum)
   let donationAddress = addressFromPubKeyHash nId gydonationPKH
   gyPrizeVal <- valueFromPlutus' (rafflePrizeValue raffleDatum)

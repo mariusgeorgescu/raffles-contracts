@@ -65,8 +65,8 @@ createRaffleTrace Wallets {..} = do
     rddl <- pPOSIXTimeFromSlotInteger 30
     createRaffleRun sampleRafflePrams (valueToPlutus (fromJust mintedTestTokens)) 10_000_000 5 cddl rddl
   logInfo ("======CREATED" ++ show raffleId)
-  -- waitNSlots 3
-  -- txID <- runWallet w1 $ do cancelRaffleRun sampleRafflePrams (fromJust raffleId)
+  waitNSlots 3
+  txID <- runWallet w1 $ do cancelRaffleRun sampleRafflePrams (fromJust raffleId)
   logInfo "canceled"
   return ()
 
